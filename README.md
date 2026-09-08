@@ -14,6 +14,23 @@ State remains explicit Rust data, and behavior remains explicit Rust systems.
 Start with the [documentation](DOCUMENTATION/README.md) for a runnable
 headless example and a plain-language explanation of the runtime.
 
+## Play Iron Maze
+
+Iron Maze is a small original 2.5D shooter built from ordinary Sim;Logic
+Systems and managed screen rectangles:
+
+```bash
+cargo run --release --example iron_maze
+```
+
+Use WASD to move and strafe, Left/Right arrows to turn, and Space or the left
+mouse button to fire. Defeat six sentries, collect health and ammunition, and
+reach the exit beacon. Enter restarts the level; Escape exits.
+The example's raycaster and gameplay stay in its own code, without a new
+general 3D renderer or external game assets. See the
+[Iron Maze guide](DOCUMENTATION/Iron-Maze.md) for controls, limits, source
+layout, and the shared headless tests.
+
 ## Current slice
 
 The first experimental slice can:

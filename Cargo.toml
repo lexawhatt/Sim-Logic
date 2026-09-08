@@ -57,7 +57,17 @@ name = "click_to_place"
 path = "examples/click_to_place/main.rs"
 required-features = ["desktop"]
 
+[[example]]
+name = "iron_maze"
+path = "examples/iron_maze/main.rs"
+required-features = ["desktop"]
+
 [[bench]]
 name = "headless_runtime"
+harness = false
+test = false
+
+[[bench]]
+name = "iron_maze"
 harness = false
 test = false

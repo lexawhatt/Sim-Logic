@@ -48,6 +48,12 @@ you to read those internals.
 
 ## Game code and runtime code
 
+[Iron Maze](Iron-Maze.md) shows the same separation at application scale:
+`game.rs` updates the game's state, `level.rs` owns its map geometry, and
+`render.rs` turns that state into screen rectangles. Its shared `mod.rs`
+connects these functions to Sim;Logic; `main.rs` supplies the window entry
+point. Its public integration tests reuse that setup headlessly.
+
 Keep application-specific rules with the application. A reusable runtime
 helper belongs in the library when it removes repeated infrastructure or
 enforces a clear invariant, with its behavior covered through the public API.

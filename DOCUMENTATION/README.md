@@ -18,6 +18,10 @@ future API. The project is experimental and public APIs can still change.
   in place while the World camera moves.
 - [Pointer input](Pointer-Input.md): bind mouse buttons, preserve click-time
   coordinates, and place objects using an explicit camera.
+- [Iron Maze](Iron-Maze.md): play a small 2.5D shooter and follow its fixed
+  game state, screen-rectangle rendering, and level restart.
+- [Code layout](Code-Layout.md): find application, ECS, rendering, and private
+  runner code when reading or changing the implementation.
 - [Repository README](../README.md): individual helpers and their limits.
 - [Examples](../examples): complete applications with ordinary Rust game logic.
 

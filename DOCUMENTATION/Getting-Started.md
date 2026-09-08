@@ -22,7 +22,7 @@ paused, and a successful fixed-stage replacement skips that frame's Space
 policy. These choices belong to the example, not to the physical keys.
 
 The complete setup is in [moving_ball.rs](../examples/moving_ball.rs). Other
-examples add one useful idea at a time:
+examples cover individual features or combine them into a small game:
 
 | Example | What it shows |
 | --- | --- |
@@ -34,6 +34,7 @@ examples add one useful idea at a time:
 | `acceleration_vectors` | Ordered acceleration and velocity updates, plus vector drawing. |
 | `screen_hud` | A screen-fixed status panel that keeps updating during pause. |
 | `click_to_place` | Placing bounded objects from click-time pointer coordinates. |
+| [iron_maze](Iron-Maze.md) | A playable 2.5D shooter with fixed game rules, a screen-rectangle view, and level restart. |
 
 Run any of them with `cargo run --release --example <name>`.
 
