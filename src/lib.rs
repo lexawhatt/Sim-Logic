@@ -22,6 +22,9 @@ mod component;
 #[cfg(feature = "desktop")]
 #[path = "platform/desktop.rs"]
 pub mod desktop;
+#[cfg(feature = "easter-eggs")]
+#[path = "rendering/easter_eggs/mod.rs"]
+pub mod easter_eggs;
 #[path = "ecs/events.rs"]
 pub mod events;
 #[path = "rendering/extraction.rs"]
@@ -63,6 +66,8 @@ pub mod world;
 /// dependency.
 pub use bevy_ecs;
 pub use component::{ComponentApprovalError, ComponentTuple, LifecycleHook};
+#[cfg(feature = "easter-eggs")]
+pub use easter_eggs::{CrabDrawError, draw_crab};
 pub use extraction::{
     ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
     ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,
@@ -141,6 +146,8 @@ pub mod prelude {
         WorldBackground,
     };
     pub use crate::world::{WorldBuildError, WorldBuilder};
+    #[cfg(feature = "easter-eggs")]
+    pub use crate::{CrabDrawError, draw_crab};
     pub use crate::{
         ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
         ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,

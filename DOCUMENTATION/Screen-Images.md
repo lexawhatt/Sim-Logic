@@ -10,6 +10,9 @@ This API accepts already decoded pixels. File loading, PNG/JPEG decoding,
 runtime asset replacement, text layout, font loading, and audio are not part
 of this slice.
 
+The optional [Ferris helper](Easter-Eggs.md) decodes only its built-in PNG;
+it does not add a general-purpose file loader to this API.
+
 Try the desktop board with `cargo run --release --example image_board`.
 WASD or arrows move the partially offscreen image, Space toggles its source
 region, Enter opens an alternate World, and Escape exits. Both Worlds use the

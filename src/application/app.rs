@@ -328,6 +328,8 @@ pub struct Application<A: Action> {
     pub(crate) events: EventRegistry,
     pub(crate) application_resources: ApplicationResourceRegistry,
     pub(crate) images: ImageAssetRegistry,
+    #[cfg(feature = "easter-eggs")]
+    pub(crate) crab_image: Option<ImageAssetId>,
     pub(crate) bindings: ActionBindings<A>,
     pub(crate) factories: Vec<RegisteredWorldFactory>,
     pub(crate) startup: StageFactories,
@@ -395,6 +397,8 @@ impl<A: Action> Application<A> {
             events: EventRegistry::default(),
             application_resources: ApplicationResourceRegistry::default(),
             images: ImageAssetRegistry::new(application, config.images),
+            #[cfg(feature = "easter-eggs")]
+            crab_image: None,
             bindings: ActionBindings::new(),
             factories: Vec::new(),
             startup: StageFactories::default(),

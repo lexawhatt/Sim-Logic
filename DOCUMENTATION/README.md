@@ -18,6 +18,8 @@ future API. The project is experimental and public APIs can still change.
   in place while the World camera moves.
 - [Screen images](Screen-Images.md): register bounded immutable pixels, crop
   and tint their placements, and share assets across World replacement.
+- [Ferris Easter egg](Easter-Eggs.md): enable `easter-eggs` and place a crab
+  using the library's `draw_crab` helper.
 - [Geometric 3D](ThreeD.md): draw bounded solid cuboids with real depth,
   switch views, and keep screen overlays above the 3D scene.
 - [Pointer input](Pointer-Input.md): bind mouse buttons, preserve click-time

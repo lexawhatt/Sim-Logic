@@ -103,6 +103,10 @@ alternate World sharing the same pixels, and Escape exits. The
 [screen-image guide](DOCUMENTATION/Screen-Images.md) explains registration,
 explicit rendering limits, memory, and headless inspection.
 
+A small optional Easter egg: enable `easter-eggs` to use the library's
+[`draw_crab` helper](DOCUMENTATION/Easter-Eggs.md). It places the bundled
+Ferris artwork through the same screen-image renderer.
+
 ## Small example
 
 ```rust,no_run

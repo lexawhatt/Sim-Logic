@@ -56,6 +56,10 @@ in `rendering/screen`, and mixed draw-plan extraction in `rendering/extraction`.
 Only `platform/desktop/images.rs` owns the Engine GPU cache and presentation.
 Neither World factories nor the CPU registry need a renderer.
 
+The optional [`draw_crab`](Easter-Eggs.md) helper and its small embedded PNG
+live in `rendering/easter_eggs`. It registers a normal image during setup and
+adds no drawing path of its own.
+
 [Iron Maze](Iron-Maze.md) shows the same separation at application scale:
 `game.rs` updates the game's state, `level.rs` owns its map geometry, and
 `render.rs` turns that state into screen rectangles. Its shared `mod.rs`
