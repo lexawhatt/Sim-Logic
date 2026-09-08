@@ -1,5 +1,7 @@
 # Getting started
 
+[Documentation](README.md)
+
 The checkout requires Rust 1.95 or newer. Its default `desktop` feature includes
 the window and GPU dependencies. Use `default-features = false` when only the
 headless runtime is needed.
@@ -34,8 +36,8 @@ examples cover individual features or combine them into a small game:
 | `acceleration_vectors` | Ordered acceleration and velocity updates, plus vector drawing. |
 | `screen_hud` | A screen-fixed status panel that keeps updating during pause. |
 | `click_to_place` | Placing bounded objects from click-time pointer coordinates. |
-| [image_board](Screen-Images.md) | Shared immutable image pixels, cropping, filtering, tint, and mixed panel/image order. |
-| [iron_maze](Iron-Maze.md) | A playable 2.5D shooter with fixed game rules, a screen-rectangle view, and level restart. |
+| [image_board](rendering/Screen-Images.md) | Shared immutable image pixels, cropping, filtering, tint, and mixed panel/image order. |
+| [iron_maze](examples/Iron-Maze.md) | A playable 2.5D shooter with fixed game rules, a screen-rectangle view, and level restart. |
 
 Run any of them with `cargo run --release --example <name>`.
 
@@ -137,4 +139,4 @@ For the repository's headless tests:
 cargo test --no-default-features
 ```
 
-Next: [how the runtime works](Runtime.md).
+Next: [how the runtime works](guides/Runtime.md).

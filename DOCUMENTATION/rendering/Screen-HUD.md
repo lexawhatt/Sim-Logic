@@ -1,11 +1,13 @@
 # Screen-fixed panels
 
+[Documentation](../README.md) / Rendering
+
 A heads-up display, or HUD, is information drawn over the scene without moving
 with its camera. `ScreenRectangleVisual` is the first small building block for
 that: a filled rectangle for a status panel, progress bar, or pause indicator.
 It is not a general UI toolkit.
 
-Try the complete [screen_hud example](../examples/screen_hud/main.rs):
+Try the complete [screen_hud example](../../examples/screen_hud/main.rs):
 
 ```bash
 cargo run --release --example screen_hud
@@ -139,7 +141,7 @@ generation as it would for any other snapshot.
 
 There are no rounded screen rectangles, text or font loading, UI buttons,
 hit testing, UI focus, nested layouts, or clipping trees yet.
-[Pointer input](Pointer-Input.md) is available, but drawing a rectangle does
+[Pointer input](../guides/Pointer-Input.md) is available, but drawing a rectangle does
 not make it capture input. It belongs to the active
 World and disappears on World replacement; it is not an application-owned
 error overlay.

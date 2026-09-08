@@ -1,5 +1,7 @@
 # How the runtime works
 
+[Documentation](../README.md) / Guides
+
 ## Objects, data, and functions
 
 An entity is an object identity. Components are ordinary Rust values attached
@@ -220,12 +222,12 @@ supported; colliders are separate optional data and never draw by themselves.
 `ScreenRectangleVisual` draws a separate, screen-fixed rectangle above the
 World. It uses top-left logical pixel coordinates, requires no `Transform2d`,
 and can be changed directly in FrameUpdate. It is a building block for status
-panels, not a clickable widget. See [screen-fixed panels](Screen-HUD.md).
+panels, not a clickable widget. See [screen-fixed panels](../rendering/Screen-HUD.md).
 
 `ScreenImageVisual` adds immutable registered images with source regions,
 tint, and filtering. Images and rectangles share a screen draw order. Their
 pixels survive World replacement, and the desktop host caches prepared Engine
-images. See [screen images](Screen-Images.md) for explicit limits and ownership.
+images. See [screen images](../rendering/Screen-Images.md) for explicit limits and ownership.
 
 Extraction rebuilds draw plans using reusable buffers; it does not patch only
 changed components. Immutable image resources are retained separately from
@@ -239,5 +241,5 @@ A previously published snapshot can remain after failure. Headless consumers
 must compare its World generation with the active generation before treating
 it as current visual state.
 
-For executable usage patterns, return to [getting started](Getting-Started.md)
-or the [example applications](../examples).
+For executable usage patterns, return to [getting started](../Getting-Started.md)
+or the [example applications](../../examples).

@@ -1,5 +1,7 @@
 # Iron Maze
 
+[Documentation](../README.md) / Examples
+
 Iron Maze is a small first-person shooter example with an original map and
 artwork drawn in code. Clear six sentries, collect supplies, and reach the
 exit. It combines typed input, fixed simulation, screen drawing, and a real
@@ -12,7 +14,7 @@ cargo run --release --example iron_maze
 ```
 
 The default `desktop` feature opens a window through Sim;Logic's desktop host.
-See [getting started](Getting-Started.md) for the toolchain and headless setup.
+See [getting started](../Getting-Started.md) for the toolchain and headless setup.
 
 ## Controls and objective
 
@@ -80,12 +82,12 @@ The map, sentries, weapon, materials, and glyphs are defined in the example.
 
 | File | Responsibility |
 | --- | --- |
-| [main.rs](../examples/iron_maze/main.rs) | Window entry point and control instructions. |
-| [mod.rs](../examples/iron_maze/mod.rs) | Input bindings, Systems, World factory, and restart/exit routing. |
-| [game.rs](../examples/iron_maze/game.rs) | Canonical `GameState`: movement, firing, enemies, pickups, and win/death rules. |
-| [level.rs](../examples/iron_maze/level.rs) | The bounded grid map, wall rays, clearance checks, and sliding. |
-| [render.rs](../examples/iron_maze/render.rs) | Wall projection, shapes, HUD, viewport layout, and rectangle pool. |
-| [font.rs](../examples/iron_maze/font.rs) | The example's small glyph patterns. |
+| [main.rs](../../examples/iron_maze/main.rs) | Window entry point and control instructions. |
+| [mod.rs](../../examples/iron_maze/mod.rs) | Input bindings, Systems, World factory, and restart/exit routing. |
+| [game.rs](../../examples/iron_maze/game.rs) | Canonical `GameState`: movement, firing, enemies, pickups, and win/death rules. |
+| [level.rs](../../examples/iron_maze/level.rs) | The bounded grid map, wall rays, clearance checks, and sliding. |
+| [render.rs](../../examples/iron_maze/render.rs) | Wall projection, shapes, HUD, viewport layout, and rectangle pool. |
+| [font.rs](../../examples/iron_maze/font.rs) | The example's small glyph patterns. |
 
 The fixed System samples `FixedInput` and advances `GameState` with an explicit
 step of approximately 1/120 second. FrameUpdate reads that state to prepare
@@ -108,7 +110,7 @@ it does not acquire shooter-specific rules.
 
 ## Check the same game without a window
 
-The [integration tests](../tests/iron_maze.rs) import the same application and
+The [integration tests](../../tests/iron_maze.rs) import the same application and
 game modules used by the desktop entry point:
 
 ```bash

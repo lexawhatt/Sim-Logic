@@ -1,5 +1,7 @@
 # Optional streaming audio output
 
+[Documentation](../README.md) / Guides
+
 The `audio` feature opens one output device and attaches one application-owned
 mono PCM source. PCM here means a sequence of amplitude samples, not an encoded
 audio file. Rodio 0.22.2 supplies device output and channel/sample conversion;
@@ -17,7 +19,7 @@ host. On Linux, building the output backend requires ALSA development files.
 Without the `audio` feature, the headless library does not require Rodio or
 an audio device.
 
-The [piano example](../examples/piano_roll/main.rs) uses this output with an
+The [piano example](../../examples/piano_roll/main.rs) uses this output with an
 editable synthetic score. Run `cargo run --release --features audio --example
 piano_roll`; it starts silent until Play or a key audition. Its `--silent`
 argument selects device-free operation explicitly.
@@ -124,14 +126,14 @@ backend allocation failure or hard real-time scheduling. Synthesis, voices,
 note timing and editing policy belong to the application. Source time should
 not advance from GPU frames or be reset during renderer recovery.
 
-The [device-free source tests](../src/audio/output_tests.rs) cover sanitization,
+The [device-free source tests](../../src/audio/output_tests.rs) cover sanitization,
 termination, channel expansion, counters and fallback policy. The piano's
-[control tests](../examples/piano_roll/control_tests.rs) additionally cover
+[control tests](../../examples/piano_roll/control_tests.rs) additionally cover
 bounded queues, Stop epochs, accepted settings and key release. Neither set
 opens an audio device or measures physical latency.
 
 Run `cargo bench --no-default-features --bench piano_roll` for the bounded
-[offline piano benchmark](../benches/piano_roll.rs). It checks zero allocator
+[offline piano benchmark](../../benches/piano_roll.rs). It checks zero allocator
 calls after warm-up in the actual processor, the queued source with control
 updates, and the application's headless 2D/3D playback frames. Each application
 case measures 100 frames at 16 ms after 32 warm-up frames, including UI layout,

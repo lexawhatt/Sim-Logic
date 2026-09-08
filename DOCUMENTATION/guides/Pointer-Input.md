@@ -1,11 +1,13 @@
 # Pointer input and click-to-place
 
+[Documentation](../README.md) / Guides
+
 Sim;Logic accepts a cursor position and left, right, or middle mouse buttons
 through the same headless input path as keyboard events. Bind a mouse button
 to an action with `Application::bind_mouse_button`. Binding a physical button
 twice returns `DuplicateMouseBinding` and preserves its original binding.
 
-Try the complete [click_to_place example](../examples/click_to_place/main.rs):
+Try the complete [click_to_place example](../../examples/click_to_place/main.rs):
 
 ```bash
 cargo run --release --example click_to_place
@@ -58,7 +60,7 @@ Pass that slice in a `FrameRequest` to drive a headless runner. A frame's
 current viewport does not replace the viewport already recorded in a sample.
 When a headless host changes geometry around a stationary pointer, it submits
 a refreshed `InputEvent::pointer_moved` sample explicitly.
-The [public pointer tests](../tests/pointer_input/runtime.rs) exercise event
+The [public pointer tests](../../tests/pointer_input/runtime.rs) exercise event
 order, delayed fixed delivery, pause, and World replacement without a window.
 
 ## Coordinates and the camera

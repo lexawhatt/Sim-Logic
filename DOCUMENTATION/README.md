@@ -1,74 +1,61 @@
 # Sim;Logic documentation
 
-Sim;Logic gives a Rust application a ready-made loop for input, objects,
-updates, and drawing through Sim;Engine. You describe the application's data
-and rules. The library handles when those rules run and how their results
-reach the renderer. There is no visual editor or separate scripting language.
+Sim;Logic supplies the application loop, objects, input and update order.
+Sim;Engine draws the result. Your application owns its game rules, scientific
+models or other domain logic; rendered state is not the model itself.
 
-These pages describe the code available in this repository, not a promised
-future API. The project is experimental and public APIs can still change.
+These guides describe the current experimental API, which can still change.
 
 ## Start here
 
-- [Getting started](Getting-Started.md): run a desktop example, then build and
-  test a moving ball without a window.
-- [How the runtime works](Runtime.md): objects, System order, Commands, input,
-  fixed time, pause, and World replacement.
-- [Screen-fixed panels](Screen-HUD.md): draw a simple status panel that stays
-  in place while the World camera moves.
-- [Screen images](Screen-Images.md): register bounded immutable pixels, crop
-  and tint their placements, and share assets across World replacement.
-- [Ferris Easter egg](Easter-Eggs.md): enable `easter-eggs` and place a crab
-  using the library's `draw_crab` helper.
-- [Geometric 3D](ThreeD.md): draw bounded solid cuboids with real depth,
-  switch views, and keep screen overlays above the 3D scene.
-- [Pointer input](Pointer-Input.md): bind mouse buttons, preserve click-time
-  coordinates, and place objects using an explicit camera.
-- [Iron Maze](Iron-Maze.md): play a small 2.5D shooter and follow its fixed
-  game state, screen-rectangle rendering, and level restart.
-- [Piano roll](Piano-Roll.md): edit a melody, synthesize it, and switch between
-  a 2D score and a 3D piano without restarting its audio clock.
-- [Audio output](Audio-Output.md): optional single-source device output,
-  buffer policy, guard lifetime, and diagnostics.
-- [Code layout](Code-Layout.md): find application, ECS, rendering, and private
-  runner code when reading or changing the implementation.
-- [Repository README](../README.md): individual helpers and their limits.
-- [Examples](../examples): complete applications with ordinary Rust game logic.
+[Getting started](Getting-Started.md) walks through a moving ball, from running
+a desktop example to testing the same application without a window.
 
-For method signatures and detailed error contracts, build the API reference:
+## Application guides
+
+- [Runtime](guides/Runtime.md): entities, Systems, Commands, fixed time,
+  interpolation, pause and World replacement.
+- [Pointer input](guides/Pointer-Input.md): mouse buttons, click-time positions
+  and screen-to-world coordinates.
+- [Audio output](guides/Audio-Output.md): optional device output, its lifetime,
+  buffer settings and diagnostics.
+
+## Drawing
+
+- [Screen panels](rendering/Screen-HUD.md): rectangles that stay in place
+  while the World camera moves.
+- [Screen images](rendering/Screen-Images.md): assets, crop, tint, ordering,
+  memory limits and the optional Ferris helper.
+- [Geometric 3D](rendering/ThreeD.md): cuboids, depth and switching views.
+
+## Example applications
+
+- [Iron Maze](examples/Iron-Maze.md): a small 2.5D shooter.
+- [Piano roll](examples/Piano-Roll.md): editing, synthesized sound and a 2D/3D piano.
+
+The [example sources](../examples/) also contain smaller applications focused
+on individual features. Their catalog is in [getting started](Getting-Started.md#try-an-existing-application).
+
+## Working on the library
+
+[Code layout](internals/Code-Layout.md) explains where the implementation lives.
+For exact signatures and error contracts, build the API reference:
 
 ```bash
 cargo doc --no-deps --open
 ```
 
-## Where each project fits
+Add `--all-features` to include the optional audio and Ferris APIs.
 
-| Project | Responsibility |
-| --- | --- |
-| Sim;Logic | Application state, input, update order, World changes, preparing visual state, and optional output integration. |
-| Sim;Engine | Rendering, cameras, the GPU, and renderer recovery. |
-| Sim;X | Scientific models, units, formulas, and rules specific to its applications. |
+## Current boundaries
 
-Generic movement and overlap helpers do not turn Sim;Logic into a physics
-solver. Likewise, a rendered position is not the authoritative state of a
-scientific model. Keep the model in components or resources and convert it to
-visual data when needed.
+There is one active World and one desktop window. Systems run sequentially;
+World factories are synchronous and take no runtime payload. Behavior sugar,
+an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
+are not implemented. The topic guides describe their specific limits:
+pointer input has no UI focus or capture, audio is not a World-owned voice service,
+and 3D does not yet load arbitrary models.
 
-## Current limits
-
-There is one active World and one desktop window. Systems run sequentially.
-World factories are synchronous and accept no runtime payload. There is no
-Behavior interface, editor, general UI toolkit, asset-loading pipeline, or
-application-level `Faulted` recovery schedule yet.
-
-Pointer input covers cursor movement and left, right, and middle buttons.
-There is no pointer capture, wheel, touch, pen, text entry, UI focus, or
-built-in hit testing.
-
-Headless tests need neither a window nor a GPU. The desktop examples currently
-target the Linux/Vulkan path; this is not a claim that every platform and
-renderer configuration has been tested.
-
-The optional `audio` feature is not enabled by default. Its device guard does
-not add staged audio Commands or automatic World voice ownership. Cuboid 3D
-rendering has independent opt-in limits and no general model importer.
+Headless use needs neither a window nor a GPU. Desktop examples have been
+checked on Linux/Vulkan, not every platform. For the product overview and
+individual helper recipes, see the [repository README](../README.md).

@@ -1,5 +1,7 @@
 # Piano roll
 
+[Documentation](../README.md) / Examples
+
 A small, editable synthesizer built with Sim;Logic. Draw notes in a 2D score,
 play them in a loop, or switch to a geometric 3D upright piano. Both views use
 the same score, transport, live keys, and audio source.
@@ -75,7 +77,7 @@ voices to match the new score. Changing the view sends no music command.
 
 The synthesizer and its control consumer allocate no memory during steady
 sample generation. This is not a hard real-time guarantee for the OS or audio
-backend. See [audio output](Audio-Output.md) for the narrower library contract.
+backend. See [audio output](../guides/Audio-Output.md) for the narrower library contract.
 
 ## Silent mode and failures
 
@@ -99,18 +101,18 @@ reconnection, and renderer recovery does not reopen the audio stream.
 
 ## Source and tests
 
-- [music.rs](../examples/piano_roll/music.rs): validated notes, fixed score,
+- [music.rs](../../examples/piano_roll/music.rs): validated notes, fixed score,
   sample-clock transport, bounded voices, and synthesis.
-- [control.rs](../examples/piano_roll/control.rs): bounded cross-thread controls,
+- [control.rs](../../examples/piano_roll/control.rs): bounded cross-thread controls,
   independent Stop/release signals, and display snapshots.
-- [app.rs](../examples/piano_roll/app.rs): editing policy, bindings and setup.
-- [view.rs](../examples/piano_roll/view.rs) and
-  [layout.rs](../examples/piano_roll/layout.rs): reused visual pools, scaled
+- [app.rs](../../examples/piano_roll/app.rs): editing policy, bindings and setup.
+- [view.rs](../../examples/piano_roll/view.rs) and
+  [layout.rs](../../examples/piano_roll/layout.rs): reused visual pools, scaled
   controls and event-time pointer hit testing.
-- [model3d.rs](../examples/piano_roll/model3d.rs): the instrument and key animation.
-- [labels.rs](../examples/piano_roll/labels.rs): 66 immutable bitmap labels,
+- [model3d.rs](../../examples/piano_roll/model3d.rs): the instrument and key animation.
+- [labels.rs](../../examples/piano_roll/labels.rs): 66 immutable bitmap labels,
   registered once from the example's original 5×7 glyphs.
-- [main.rs](../examples/piano_roll/main.rs): device lifetime and window entry.
+- [main.rs](../../examples/piano_roll/main.rs): device lifetime and window entry.
 
 Music, editor input, and both extracted views are tested without opening a
 device or window:
@@ -133,5 +135,5 @@ latency or replace listening to the instrument yourself.
 This example is not a complete music workstation. Saving, MIDI devices/files,
 recording, velocity editing, undo, zoom/scroll, sustain pedals, and arbitrary
 3D model import are not implemented. Its domain code stays in the example;
-reusable device output and the [cuboid rendering bridge](ThreeD.md) are library
+reusable device output and the [cuboid rendering bridge](../rendering/ThreeD.md) are library
 features. No general-purpose text or UI toolkit is implied by the fixed controls.

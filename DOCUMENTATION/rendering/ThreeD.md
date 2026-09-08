@@ -1,5 +1,7 @@
 # Bounded geometric 3D
 
+[Documentation](../README.md) / Rendering
+
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
 opaque background. This is real geometric 3D, not projected screen rectangles.
@@ -8,7 +10,7 @@ not imported meshes, textures, lights, shadows, transparency, or 3D picking.
 
 The components, camera values, and extracted records work without a window or
 GPU. Desktop rendering requires the `desktop` feature. See the
-[piano example](../examples/piano_roll) for an application that switches
+[piano example](../../examples/piano_roll) for an application that switches
 between a score view and a geometric instrument using shared application state.
 
 ## One cuboid
@@ -212,6 +214,6 @@ checks; their `inside_view()` results are useful but do not prove Engine's
 stricter portable-shader validation. Verify the intended desktop camera and
 viewport range with the actual renderer as well.
 
-The [headless acceptance tests](../tests/three_d.rs) cover visibility, shared
+The [headless acceptance tests](../../tests/three_d.rs) cover visibility, shared
 identity across view switches, current-value transforms, atomic failure, and
 World replacement. They do not claim GPU clipping support or rendered output.

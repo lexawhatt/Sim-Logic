@@ -25,7 +25,7 @@ cargo run --release --features audio --example piano_roll
 
 Left click adds/selects notes, dragging changes their length, and right click
 removes them. Space plays/pauses; Enter switches 2D/3D. Click the bottom keys
-or hold A/S/D/W to play C/D/E/F. The [piano guide](DOCUMENTATION/Piano-Roll.md)
+or hold A/S/D/W to play C/D/E/F. The [piano guide](DOCUMENTATION/examples/Piano-Roll.md)
 explains all controls, silent mode, timing, and the current limits.
 
 ## Play Iron Maze
@@ -42,7 +42,7 @@ mouse button to fire. Defeat six sentries, collect health and ammunition, and
 reach the exit beacon. Enter restarts the level; Escape exits.
 The example's raycaster and gameplay stay in its own code, without a new
 general 3D renderer or external game assets. See the
-[Iron Maze guide](DOCUMENTATION/Iron-Maze.md) for controls, limits, source
+[Iron Maze guide](DOCUMENTATION/examples/Iron-Maze.md) for controls, limits, source
 layout, and the shared headless tests.
 
 ## Current slice
@@ -92,19 +92,19 @@ The first experimental slice can:
 This is not a finished general-purpose engine. Generic transition payloads,
 asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit,
 managed text, arbitrary 3D assets, a World-scoped audio service, and parallel
-schedules are deliberately not public yet. The [audio output](DOCUMENTATION/Audio-Output.md)
+schedules are deliberately not public yet. The [audio output](DOCUMENTATION/guides/Audio-Output.md)
 adapter is optional, immediate and independent of World transactions; it is
-not a full sound engine. The [3D bridge](DOCUMENTATION/ThreeD.md) currently
+not a full sound engine. The [3D bridge](DOCUMENTATION/rendering/ThreeD.md) currently
 supports cuboids, not arbitrary meshes, lighting or materials.
 
 Try the image path with `cargo run --release --example image_board`.
 WASD/arrows move an image, Space changes its source region, Enter opens an
 alternate World sharing the same pixels, and Escape exits. The
-[screen-image guide](DOCUMENTATION/Screen-Images.md) explains registration,
+[screen-image guide](DOCUMENTATION/rendering/Screen-Images.md) explains registration,
 explicit rendering limits, memory, and headless inspection.
 
 A small optional Easter egg: enable `easter-eggs` to use the library's
-[`draw_crab` helper](DOCUMENTATION/Easter-Eggs.md). It places the bundled
+[`draw_crab` helper](DOCUMENTATION/rendering/Screen-Images.md#ferris-easter-egg). It places the bundled
 Ferris artwork through the same screen-image renderer.
 
 ## Small example
@@ -321,7 +321,7 @@ buttons, mouse handling, or a layout tree.
 Run `cargo run --release --example screen_hud` to see a moving World with a
 fixed status panel and progress bar. Space pauses/resumes; the activity
 indicator continues animating during pause; Escape exits. See the
-[screen panel guide](DOCUMENTATION/Screen-HUD.md) for a runnable headless
+[screen panel guide](DOCUMENTATION/rendering/Screen-HUD.md) for a runnable headless
 example, coordinate rules, ordering, and limits.
 
 ## World replacement on a press
@@ -483,7 +483,7 @@ cargo run --release --example coin_pickup
 pointer position, clears with right-click, and exits with Escape. It keeps a
 static camera and at most 128 placed circles. Each press retains its own
 logical position and viewport through delayed fixed updates. See the
-[pointer input guide](DOCUMENTATION/Pointer-Input.md) for the public API,
+[pointer input guide](DOCUMENTATION/guides/Pointer-Input.md) for the public API,
 desktop geometry handling, and limits.
 
 ```bash

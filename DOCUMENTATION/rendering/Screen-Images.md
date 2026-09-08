@@ -1,5 +1,7 @@
 # Screen images and immutable assets
 
+[Documentation](../README.md) / Rendering
+
 Register an image once, then place it in one or more Worlds with
 `ScreenImageVisual`. The Application owns its pixels across World replacement.
 Each visual holds a small image handle, destination geometry, optional source
@@ -10,14 +12,14 @@ This API accepts already decoded pixels. File loading, PNG/JPEG decoding,
 runtime asset replacement, text layout, font loading, and audio are not part
 of this slice.
 
-The optional [Ferris helper](Easter-Eggs.md) decodes only its built-in PNG;
+The optional [Ferris helper](#ferris-easter-egg) decodes only its built-in PNG;
 it does not add a general-purpose file loader to this API.
 
 Try the desktop board with `cargo run --release --example image_board`.
 WASD or arrows move the partially offscreen image, Space toggles its source
 region, Enter opens an alternate World, and Escape exits. Both Worlds use the
-same registered pixels. The [example source](../examples/image_board/game.rs)
-is also exercised by [headless acceptance tests](../tests/screen_images/example.rs).
+same registered pixels. The [example source](../../examples/image_board/game.rs)
+is also exercised by [headless acceptance tests](../../tests/screen_images/example.rs).
 
 ## A complete headless image
 
@@ -81,7 +83,7 @@ fn main() -> LogicResult {
 }
 ```
 
-Use the [getting-started dependency setup](Getting-Started.md) to run this in
+Use the [getting-started dependency setup](../Getting-Started.md) to run this in
 a separate project with `default-features = false`. For desktop presentation,
 enable the default feature and replace the headless driver with
 `app.run(initial)?;`. The camera is still required to validate the World scene,
@@ -191,9 +193,63 @@ Headless extraction checks CPU state and ordering. Screenshots can show a
 particular rendered result; neither a screenshot nor a headless test proves
 allocation-free GPU presentation or a frame-rate guarantee.
 
-The [CPU allocation fixture](../benches/headless_runtime/images.rs) measures
+The [CPU allocation fixture](../../benches/headless_runtime/images.rs) measures
 64 images sharing one asset and 128 rectangles in stable mixed order. It
 changes positions and colors, checks the result every frame, and requires
 zero allocator calls across 100 frames after warm-up. Run it with
 `cargo bench --no-default-features --bench headless_runtime -- --images-only`.
 This measures the headless path, not uploads, rendering, or changed partitions.
+
+## Ferris Easter egg
+
+Enable the optional `easter-eggs` Cargo feature to use the library's
+`draw_crab` helper. It prepares a normal `ScreenImageVisual` with transparent
+Ferris artwork; it does not spawn an entity or draw immediately.
+
+```rust
+use sim_logic::prelude::*;
+
+fn main() -> LogicResult {
+    let mut config = AppConfig::default();
+    config.set_render_limits(
+        RenderLimits::default()
+            .with_max_screen_images(1)
+            .with_frame_limits(FrameLimits::new(2, 1, 6, 4096, 1024 * 1024, 1)),
+    );
+    let mut app = Application::<u8>::new(config)?;
+    let crab = draw_crab(&mut app, LogicalScreenPosition::new(24.0, 24.0), 230.0)?;
+    let camera = ActiveCamera2d::centered(1.0)?;
+    let initial = app.register_world("ferris", move |world| {
+        world.spawn(camera)?;
+        world.spawn(crab)?;
+        Ok(())
+    })?;
+    app.run(initial)?;
+    Ok(())
+}
+```
+
+Use the [dependency setup](../Getting-Started.md) with
+`features = ["easter-eggs"]` and the default `desktop` feature for this program.
+For headless use, disable default features and replace `app.run(initial)?`
+with `app.build_headless(initial)?`. The sample budgets one crab, not the
+two-by-two image used earlier on this page; additional placements need their
+own frame allowance. Image, entity and frame limits never grow automatically.
+
+Call during Application setup. Width must be positive and finite; height
+preserves the 460:307 proportions. Sampling is linear; position, tint, layer,
+copies and entity visibility use the ordinary image controls described above.
+Geometry is checked before image work; failed registration leaves existing
+assets intact and does not cache an invalid handle.
+
+The first successful call decodes the embedded 40,445-byte PNG and registers
+564,880 pixel bytes. Later calls reuse that Application's handle, even at full
+registry capacity, and the asset survives World replacement. The first decode
+needs a temporary pixel buffer plus decoder memory before registration copies
+the pixels. Desktop copies and total-memory caveats are covered under
+[limits and memory](#limits-and-memory). No decoding runs each frame.
+
+With `easter-eggs` disabled, the helper, decoder dependency and embedded image
+are absent from the build. No runtime files or downloads are needed.
+Ferris artwork is by Karen Rustad Tölva and has a
+[CC0 dedication](https://rustacean.net/).
