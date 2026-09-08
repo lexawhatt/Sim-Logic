@@ -1,0 +1,58 @@
+[package]
+name = "sim-logic"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "A code-first application and logic layer for Sim;Engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lexawhatt/Sim-Logic"
+
+[features]
+default = ["desktop"]
+desktop = ["sim-engine/wgpu", "dep:winit", "dep:pollster"]
+
+[dependencies]
+bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std", "debug"] }
+sim-engine = { version = "=0.2.0", default-features = false }
+winit = { version = "=0.30.12", optional = true }
+pollster = { version = "=1.0.1", optional = true }
+
+[[example]]
+name = "moving_ball"
+required-features = ["desktop"]
+
+[[example]]
+name = "projectile_arena"
+required-features = ["desktop"]
+
+[[example]]
+name = "coin_pickup"
+required-features = ["desktop"]
+
+[[example]]
+name = "camera_follow"
+required-features = ["desktop"]
+
+[[example]]
+name = "persistent_score"
+required-features = ["desktop"]
+
+[[example]]
+name = "rectangle_room"
+path = "examples/rectangle_room/main.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "acceleration_vectors"
+path = "examples/acceleration_vectors/main.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "screen_hud"
+path = "examples/screen_hud/main.rs"
+required-features = ["desktop"]
+
+[[bench]]
+name = "headless_runtime"
+harness = false
+test = false
