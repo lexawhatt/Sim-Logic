@@ -92,7 +92,9 @@ pub mod prelude {
     };
     pub use crate::commands::{CommandEnqueueError, LogicCommands as Commands};
     #[cfg(feature = "desktop")]
-    pub use crate::desktop::{DesktopConfig, DesktopExitReason, DesktopRunError, DesktopRunReport};
+    pub use crate::desktop::{
+        DesktopConfig, DesktopExitReason, DesktopPointerError, DesktopRunError, DesktopRunReport,
+    };
     pub use crate::events::{EventReader, EventSendError, EventWriter, WorldEvent};
     pub use crate::headless::{
         BeginFrameRejection, CandidateFailure, FrameFailure, FrameOutcome, FrameRequest,
@@ -103,8 +105,9 @@ pub mod prelude {
         LogicEntity, LogicEntityRef, TransitionIntentToken, WorldFactoryId, WorldGeneration,
     };
     pub use crate::input::{
-        Action, ActionEdge, ButtonState, DigitalAxis2d, FixedInput, FrameInput,
-        InputCollectionError, InputEvent, PhysicalKeyCode,
+        Action, ActionEdge, ButtonState, DigitalAxis2d, DuplicateMouseBinding, FixedInput,
+        FrameInput, InputCollectionError, InputEvent, MouseButton, PhysicalKeyCode, PointerSample,
+        PointerSampleError,
     };
     pub use crate::motion::{
         CameraFollowTarget2d, CameraFollowTarget2dError, DigitalMovement2d, DigitalMovement2dError,

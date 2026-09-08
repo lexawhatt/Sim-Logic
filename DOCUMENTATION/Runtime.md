@@ -109,20 +109,28 @@ automatically teleport its camera.
 
 ## Input and typed events
 
-Physical keys are mapped to your action enum. `digital_axis` returns the raw
-two-dimensional direction; `normalized_digital_axis` gives a constant-speed
+Physical keys and left, right, and middle mouse buttons are mapped to your
+action enum. `digital_axis` returns the raw two-dimensional direction;
+`normalized_digital_axis` gives a constant-speed
 direction and safely returns zero for idle input. Binding WASD and arrows to
 one action axis does not run movement by itself.
 
-Held state answers "is the key down?". An edge records a particular press or
-release. `has_press_occurrence` checks for at least one press without consuming
-it; `pressed` iterates all occurrences. Two physical keys mapped to the same
-action can produce two edges, even while the action remains held throughout.
+Held state answers "is any bound control down?". An edge records a particular
+press or release. `has_press_occurrence` checks for at least one press without
+consuming it; `pressed` iterates all occurrences. Two physical controls mapped
+to the same action can produce two edges, even while the action remains held
+throughout.
 
 Frame input lasts for its application frame. Fixed edges wait through
 zero-tick frames and are delivered to the first consuming fixed tick, not
 repeated for every catch-up tick. Multiple Systems in that tick can read the
 same snapshot. Application-controlled pause has the special rules below.
+
+Both input parameters expose the latest pointer sample through `pointer()`.
+Mouse edges also retain their own sample from the time of that button event,
+including its logical viewport. Use the edge's sample when a click should
+refer to its original position. The [pointer guide](Pointer-Input.md) explains
+coordinate conversion, leave events, stage isolation, and the input bounds.
 
 Typed events are small `Copy` values sent with `EventWriter<E>`. Later Systems
 in the same stage invocation see them through `EventReader<E>`; reads do not

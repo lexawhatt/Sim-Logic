@@ -10,7 +10,10 @@ use crate::{
     events::EventRegistry,
     headless::{HeadlessRunner, RunnerBuildError},
     identity::{ApplicationId, IdentityExhausted, WorldFactoryId},
-    input::{Action, ActionBindings, DigitalAxis2d, DuplicateKeyBinding, PhysicalKeyCode},
+    input::{
+        Action, ActionBindings, DigitalAxis2d, DuplicateKeyBinding, DuplicateMouseBinding,
+        MouseButton, PhysicalKeyCode,
+    },
     motion::{
         CameraFollowTarget2d, DigitalMovement2d, LinearAcceleration2d, LinearVelocity2d,
         follow_camera_target2d, integrate_digital_movement2d, integrate_linear_acceleration2d,
@@ -107,11 +110,12 @@ impl AppConfig {
         Ok(self)
     }
 
-    /// Replaces both the maximum physical event count for one frame and the
-    /// maximum logical edge count retained for a later FixedUpdate delivery.
+    /// Replaces the maximum physical events per frame, generated logical edges
+    /// per frame, and retained logical edges for a later FixedUpdate delivery.
     ///
-    /// A frame that would exceed either bound is rejected before input state
-    /// changes.
+    /// A frame exceeding any bound is rejected before input state changes.
+    /// Generated edges include synthetic mouse releases on pointer leave;
+    /// their frame bound still applies while fixed updates are paused.
     pub fn set_input_event_limit(&mut self, limit: usize) -> Result<&mut Self, AppConfigError> {
         if limit == 0 {
             return Err(AppConfigError::ZeroInputEventLimit);
@@ -396,6 +400,20 @@ impl<A: Action> Application<A> {
         action: A,
     ) -> Result<&mut Self, DuplicateKeyBinding> {
         self.bindings.bind(key, action)?;
+        Ok(self)
+    }
+
+    /// Binds one portable mouse button to a typed action without replacing an
+    /// existing binding. Bindings freeze when the application is started.
+    ///
+    /// Mouse buttons and keys may share an action: it remains held until all
+    /// bound physical controls release. Their individual edges remain distinct.
+    pub fn bind_mouse_button(
+        &mut self,
+        button: MouseButton,
+        action: A,
+    ) -> Result<&mut Self, DuplicateMouseBinding> {
+        self.bindings.bind_mouse_button(button, action)?;
         Ok(self)
     }
 

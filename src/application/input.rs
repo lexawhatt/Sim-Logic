@@ -1,4 +1,14 @@
-//! Typed, platform-independent keyboard input.
+//! Typed, platform-independent keyboard and pointer input.
+
+#[path = "input/pointer.rs"]
+mod pointer;
+
+use pointer::{ALL_MOUSE_BUTTONS, mouse_button_index};
+pub use pointer::{DuplicateMouseBinding, MouseButton, PointerSample, PointerSampleError};
+
+#[cfg(test)]
+#[path = "input/pointer_tests.rs"]
+mod pointer_tests;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -16,7 +26,7 @@ use sim_engine::Vec2;
 use crate::identity::{ApplicationId, TransitionIntentToken, WorldGeneration};
 
 /// Default maximum number of physical input events accepted in one frame and
-/// logical edges retained for the next FixedUpdate delivery.
+/// logical edges generated per frame or retained for the next FixedUpdate delivery.
 pub const DEFAULT_INPUT_EVENT_LIMIT: usize = 1_024;
 
 /// Marker contract for values used as logical input actions.
@@ -128,17 +138,18 @@ pub(crate) const SUPPORTED_PHYSICAL_KEY_COUNT: usize = ALL_PHYSICAL_KEYS.len();
 /// The state carried by a physical button event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ButtonState {
-    /// The key transitioned from up to down.
+    /// The key or mouse button transitioned from up to down.
     Pressed,
-    /// The key transitioned from down to up.
+    /// The key or mouse button transitioned from down to up.
     Released,
 }
 
 /// One platform-independent physical input event.
 ///
-/// Repeated `Pressed` events for a key that is already held, and repeated
-/// `Released` events for a key that is already up, do not create logical
-/// edges. This keeps desktop key repeat from changing core semantics.
+/// Repeated presses of an already-held key or mouse button, and repeated
+/// releases of one already up, do not create logical edges. Motion updates
+/// continuous state without creating edges. Event order determines the pointer
+/// sample captured by each mouse edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InputEvent {
     /// A physical keyboard state change.
@@ -148,12 +159,39 @@ pub enum InputEvent {
         /// The reported button state.
         state: ButtonState,
     },
+    /// Updates the continuous pointer without generating a logical action edge.
+    PointerMoved {
+        /// Finite logical coordinates and the viewport at this point in event order.
+        sample: PointerSample,
+    },
+    /// A physical mouse-button state change, using the latest pointer sample.
+    MouseButton {
+        /// The physical mouse button.
+        button: MouseButton,
+        /// The reported button state.
+        state: ButtonState,
+    },
+    /// Clears the pointer and releases held mouse buttons in Left/Right/Middle
+    /// order. Synthesized releases have no pointer sample. Keyboard state is
+    /// unchanged; focus-loss adapters must separately release held keys.
+    PointerLeft,
 }
 
 impl InputEvent {
     /// Creates a physical keyboard event for the headless or desktop adapter.
     pub const fn key(key: PhysicalKeyCode, state: ButtonState) -> Self {
         Self::Key { key, state }
+    }
+
+    /// Creates an ordered pointer-position update, independent of bindings.
+    pub const fn pointer_moved(sample: PointerSample) -> Self {
+        Self::PointerMoved { sample }
+    }
+
+    /// Creates a mouse-button event. Its logical edge captures the latest
+    /// preceding pointer sample, or None when no position is known.
+    pub const fn mouse_button(button: MouseButton, state: ButtonState) -> Self {
+        Self::MouseButton { button, state }
     }
 }
 
@@ -184,12 +222,14 @@ impl Error for DuplicateKeyBinding {}
 #[derive(Debug, Clone)]
 pub(crate) struct ActionBindings<A: Action> {
     by_key: [Option<A>; SUPPORTED_PHYSICAL_KEY_COUNT],
+    by_mouse: [Option<A>; ALL_MOUSE_BUTTONS.len()],
 }
 
 impl<A: Action> Default for ActionBindings<A> {
     fn default() -> Self {
         Self {
             by_key: [None; SUPPORTED_PHYSICAL_KEY_COUNT],
+            by_mouse: [None; ALL_MOUSE_BUTTONS.len()],
         }
     }
 }
@@ -197,6 +237,23 @@ impl<A: Action> Default for ActionBindings<A> {
 impl<A: Action> ActionBindings<A> {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn bind_mouse_button(
+        &mut self,
+        button: MouseButton,
+        action: A,
+    ) -> Result<&mut Self, DuplicateMouseBinding> {
+        let slot = &mut self.by_mouse[mouse_button_index(button)];
+        if slot.is_some() {
+            return Err(DuplicateMouseBinding { button });
+        }
+        *slot = Some(action);
+        Ok(self)
+    }
+
+    fn mouse_action_for(&self, button: MouseButton) -> Option<A> {
+        self.by_mouse[mouse_button_index(button)]
     }
 
     /// Binds one physical key without replacing an existing binding.
@@ -276,12 +333,12 @@ impl<A: Action> ActionBindings<A> {
 /// Failure to configure or collect application input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputCollectionError {
-    /// The shared physical-event and retained-edge limit is zero.
+    /// The shared physical-event, generated-edge, and retained-edge limit is zero.
     ZeroEventLimit,
     /// The runtime could not reserve the bounded input storage required by the
     /// configured limit.
     StorageAllocationFailed {
-        /// Configured physical-event and retained-edge limit.
+        /// Configured physical-event, generated-edge, and retained-edge limit.
         limit: usize,
     },
     /// The supplied frame exceeds its physical event budget.
@@ -290,6 +347,14 @@ pub enum InputCollectionError {
         limit: usize,
         /// Event count supplied for the rejected frame.
         received: usize,
+    },
+    /// This frame would generate too many logical edges, including releases
+    /// synthesized by PointerLeft. Checked even when fixed updates are paused.
+    FrameEdgeLimitExceeded {
+        /// Maximum generated frame-input edge count.
+        limit: usize,
+        /// New logical edges produced by the rejected frame.
+        incoming: usize,
     },
     /// Retaining this frame's logical edges for FixedUpdate would exceed the
     /// shared input event limit.
@@ -319,6 +384,10 @@ impl fmt::Display for InputCollectionError {
                 formatter,
                 "input frame contains {received} physical events, exceeding the limit of {limit}"
             ),
+            Self::FrameEdgeLimitExceeded { limit, incoming } => write!(
+                formatter,
+                "input frame generates {incoming} logical edges, exceeding the limit of {limit}"
+            ),
             Self::RetainedFixedEdgeLimitExceeded {
                 limit,
                 retained,
@@ -338,23 +407,30 @@ impl Error for InputCollectionError {}
 
 /// One logical action edge and its causal transition token.
 ///
-/// An edge belongs to one physical occurrence. Different keys mapped to the
-/// same action therefore remain separate entries and are returned in physical
-/// event order.
+/// An edge belongs to one physical occurrence. Different keys or mouse buttons
+/// mapped to the same action remain separate entries in physical event order.
+/// Pointer leave synthesizes releases in Left/Right/Middle order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ActionEdge<A: Action> {
     action: A,
     state: ButtonState,
     intent: TransitionIntentToken,
+    pointer: Option<PointerSample>,
 }
 
 impl<A: Action> ActionEdge<A> {
+    /// Returns this mouse occurrence's event-time pointer sample. Keyboard
+    /// edges, synthesized leave releases, and mouse edges without a known
+    /// position return None. Later movement does not change this value.
+    pub const fn pointer(self) -> Option<PointerSample> {
+        self.pointer
+    }
     /// Returns the logical action associated with this occurrence.
     pub const fn action(self) -> A {
         self.action
     }
 
-    /// Returns whether this occurrence pressed or released its physical key.
+    /// Returns whether this occurrence pressed or released its physical control.
     pub const fn state(self) -> ButtonState {
         self.state
     }
@@ -377,10 +453,11 @@ impl<A: Action> ActionEdge<A> {
 pub(crate) struct FrameInputState<A: Action> {
     held: HashSet<A>,
     edges: Vec<ActionEdge<A>>,
+    pointer: Option<PointerSample>,
 }
 
 impl<A: Action> FrameInputState<A> {
-    /// Returns whether at least one bound physical key for `action` is held.
+    /// Returns whether at least one bound key or mouse button for `action` is held.
     pub fn held(&self, action: A) -> bool {
         self.held.contains(&action)
     }
@@ -409,12 +486,14 @@ impl<A: Action> FrameInputState<A> {
         Self {
             held: HashSet::new(),
             edges: Vec::new(),
+            pointer: None,
         }
     }
 
     pub(crate) fn clear_reusing_storage(&mut self) {
         self.held.clear();
         self.edges.clear();
+        self.pointer = None;
     }
 
     fn replace_from(&mut self, held_action_counts: &HashMap<A, usize>, edges: &[ActionEdge<A>]) {
@@ -432,7 +511,14 @@ pub struct FrameInput<'w, A: Action> {
 }
 
 impl<A: Action> FrameInput<'_, A> {
-    /// Returns whether at least one bound physical key for `action` is held.
+    /// Returns the latest accepted pointer sample, or None before motion or
+    /// after leaving. Inactive-stage snapshots are empty. Use an action edge's
+    /// [`ActionEdge::pointer`] for the position of a particular click.
+    pub fn pointer(&self) -> Option<PointerSample> {
+        self.state.pointer
+    }
+
+    /// Returns whether at least one bound key or mouse button for `action` is held.
     pub fn held(&self, action: A) -> bool {
         self.state.held(action)
     }
@@ -501,10 +587,11 @@ impl<A: Action> FrameInput<'_, A> {
 pub(crate) struct FixedInputState<A: Action> {
     held: HashSet<A>,
     edges: Vec<ActionEdge<A>>,
+    pointer: Option<PointerSample>,
 }
 
 impl<A: Action> FixedInputState<A> {
-    /// Returns whether at least one bound physical key for `action` is held.
+    /// Returns whether at least one bound key or mouse button for `action` is held.
     pub fn held(&self, action: A) -> bool {
         self.held.contains(&action)
     }
@@ -533,12 +620,14 @@ impl<A: Action> FixedInputState<A> {
         Self {
             held: HashSet::new(),
             edges: Vec::new(),
+            pointer: None,
         }
     }
 
     pub(crate) fn clear_reusing_storage(&mut self) {
         self.held.clear();
         self.edges.clear();
+        self.pointer = None;
     }
 
     fn replace_from(&mut self, held_action_counts: &HashMap<A, usize>, edges: &[ActionEdge<A>]) {
@@ -558,7 +647,15 @@ pub struct FixedInput<'w, A: Action> {
 }
 
 impl<A: Action> FixedInput<'_, A> {
-    /// Returns whether at least one bound physical key for `action` is held.
+    /// Returns the latest accepted pointer sample for this tick. Retained
+    /// click edges keep their own earlier samples; later catch-up ticks retain
+    /// the continuous pointer but do not replay those edges. During FrameUpdate
+    /// this snapshot returns None. Input resources are not present in Startup.
+    pub fn pointer(&self) -> Option<PointerSample> {
+        self.state.pointer
+    }
+
+    /// Returns whether at least one bound key or mouse button for `action` is held.
     pub fn held(&self, action: A) -> bool {
         self.state.held(action)
     }
@@ -628,11 +725,21 @@ pub(crate) struct InputCollectionReport {
     pub(crate) unmapped_events: usize,
 }
 
+#[derive(Clone, Copy)]
+struct EdgeDelivery {
+    paused: bool,
+    application: ApplicationId,
+    origin: WorldGeneration,
+    frame: u64,
+}
+
 #[derive(Debug)]
 pub(crate) struct InputState<A: Action> {
     bindings: ActionBindings<A>,
     event_limit: usize,
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
+    held_mouse: [bool; ALL_MOUSE_BUTTONS.len()],
+    pointer: Option<PointerSample>,
     held_action_counts: HashMap<A, usize>,
     frame_edges: Vec<ActionEdge<A>>,
     fixed_edges: Vec<ActionEdge<A>>,
@@ -651,7 +758,7 @@ impl<A: Action> InputState<A> {
         let mut held_action_counts = HashMap::new();
         let mut frame_edges = Vec::new();
         let mut fixed_edges = Vec::new();
-        let held_capacity = SUPPORTED_PHYSICAL_KEY_COUNT;
+        let held_capacity = SUPPORTED_PHYSICAL_KEY_COUNT + ALL_MOUSE_BUTTONS.len();
         held_action_counts
             .try_reserve(held_capacity)
             .map_err(|_| InputCollectionError::StorageAllocationFailed { limit: event_limit })?;
@@ -666,6 +773,8 @@ impl<A: Action> InputState<A> {
             bindings,
             event_limit,
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
+            held_mouse: [false; ALL_MOUSE_BUTTONS.len()],
+            pointer: None,
             held_action_counts,
             frame_edges,
             fixed_edges,
@@ -700,38 +809,43 @@ impl<A: Action> InputState<A> {
         }
 
         self.frame_edges.clear();
+        let delivery = EdgeDelivery {
+            paused,
+            application,
+            origin,
+            frame,
+        };
 
         for event in events {
-            let InputEvent::Key { key, state } = *event;
-            let Some(action) = self.bindings.action_for(key) else {
-                continue;
-            };
-
-            let held = &mut self.held_keys[physical_key_index(key)];
-            let next_held = state == ButtonState::Pressed;
-            let state_changed = *held != next_held;
-            *held = next_held;
-
-            if !state_changed {
-                continue;
-            }
-
-            self.update_held_action(action, state);
-
-            let occurrence = self.next_occurrence;
-            // Preflight proved that every logical edge in this batch has a
-            // representable, never-reused occurrence value.
-            self.next_occurrence += 1;
-
-            let edge = ActionEdge {
-                action,
-                state,
-                intent: TransitionIntentToken::input(application, origin, frame, occurrence),
-            };
-
-            self.frame_edges.push(edge);
-            if !paused {
-                self.fixed_edges.push(edge);
+            match *event {
+                InputEvent::Key { key, state } => {
+                    if let Some(action) = self.bindings.action_for(key)
+                        && change_button(&mut self.held_keys[physical_key_index(key)], state)
+                    {
+                        self.record_edge(action, state, None, delivery);
+                    }
+                }
+                InputEvent::MouseButton { button, state } => {
+                    if let Some(action) = self.bindings.mouse_action_for(button)
+                        && change_button(&mut self.held_mouse[mouse_button_index(button)], state)
+                    {
+                        self.record_edge(action, state, self.pointer, delivery);
+                    }
+                }
+                InputEvent::PointerMoved { sample } => self.pointer = Some(sample),
+                InputEvent::PointerLeft => {
+                    self.pointer = None;
+                    for button in ALL_MOUSE_BUTTONS {
+                        if let Some(action) = self.bindings.mouse_action_for(button)
+                            && change_button(
+                                &mut self.held_mouse[mouse_button_index(button)],
+                                ButtonState::Released,
+                            )
+                        {
+                            self.record_edge(action, ButtonState::Released, None, delivery);
+                        }
+                    }
+                }
             }
         }
 
@@ -743,7 +857,8 @@ impl<A: Action> InputState<A> {
         events: &[InputEvent],
         paused: bool,
     ) -> Result<InputCollectionReport, InputCollectionError> {
-        let mut held = self.held_keys;
+        let mut held_keys = self.held_keys;
+        let mut held_mouse = self.held_mouse;
         let mut report = InputCollectionReport {
             physical_events: events.len(),
             logical_edges: 0,
@@ -752,21 +867,46 @@ impl<A: Action> InputState<A> {
         };
 
         for event in events {
-            let InputEvent::Key { key, state } = *event;
-            if self.bindings.action_for(key).is_none() {
-                report.unmapped_events += 1;
-                continue;
+            match *event {
+                InputEvent::Key { key, state } => {
+                    preflight_button(
+                        self.bindings.action_for(key),
+                        &mut held_keys[physical_key_index(key)],
+                        state,
+                        &mut report,
+                    );
+                }
+                InputEvent::MouseButton { button, state } => {
+                    preflight_button(
+                        self.bindings.mouse_action_for(button),
+                        &mut held_mouse[mouse_button_index(button)],
+                        state,
+                        &mut report,
+                    );
+                }
+                InputEvent::PointerMoved { .. } => {}
+                InputEvent::PointerLeft => {
+                    for button in ALL_MOUSE_BUTTONS {
+                        // Synthetic no-op releases are not physical repeats
+                        // or unmapped events; only actual held buttons count.
+                        if self.bindings.mouse_action_for(button).is_some()
+                            && change_button(
+                                &mut held_mouse[mouse_button_index(button)],
+                                ButtonState::Released,
+                            )
+                        {
+                            report.logical_edges += 1;
+                        }
+                    }
+                }
             }
+        }
 
-            let is_held = &mut held[physical_key_index(key)];
-            let next_held = state == ButtonState::Pressed;
-            if *is_held == next_held {
-                report.suppressed_repeats += 1;
-                continue;
-            }
-
-            *is_held = next_held;
-            report.logical_edges += 1;
+        if report.logical_edges > self.event_limit {
+            return Err(InputCollectionError::FrameEdgeLimitExceeded {
+                limit: self.event_limit,
+                incoming: report.logical_edges,
+            });
         }
 
         if !paused && report.logical_edges > self.event_limit.saturating_sub(self.fixed_edges.len())
@@ -797,10 +937,12 @@ impl<A: Action> InputState<A> {
 
     pub(crate) fn copy_frame_snapshot_into(&self, target: &mut FrameInputState<A>) {
         target.replace_from(&self.held_action_counts, &self.frame_edges);
+        target.pointer = self.pointer;
     }
 
     pub(crate) fn copy_fixed_snapshot_into(&self, target: &mut FixedInputState<A>) {
         target.replace_from(&self.held_action_counts, &self.fixed_edges);
+        target.pointer = self.pointer;
     }
 
     pub(crate) fn consume_fixed_delivery(&mut self) {
@@ -842,6 +984,35 @@ impl<A: Action> InputState<A> {
         self.frame_edges.clear();
     }
 
+    fn record_edge(
+        &mut self,
+        action: A,
+        state: ButtonState,
+        pointer: Option<PointerSample>,
+        delivery: EdgeDelivery,
+    ) {
+        self.update_held_action(action, state);
+        let occurrence = self.next_occurrence;
+        // Whole-frame preflight proved both queue bounds and never-reused
+        // occurrence space, including every synthetic leave release.
+        self.next_occurrence += 1;
+        let edge = ActionEdge {
+            action,
+            state,
+            pointer,
+            intent: TransitionIntentToken::input(
+                delivery.application,
+                delivery.origin,
+                delivery.frame,
+                occurrence,
+            ),
+        };
+        self.frame_edges.push(edge);
+        if !delivery.paused {
+            self.fixed_edges.push(edge);
+        }
+    }
+
     fn update_held_action(&mut self, action: A, state: ButtonState) {
         match state {
             ButtonState::Pressed => {
@@ -857,6 +1028,28 @@ impl<A: Action> InputState<A> {
                 }
             }
         }
+    }
+}
+
+fn change_button(held: &mut bool, state: ButtonState) -> bool {
+    let next = state == ButtonState::Pressed;
+    let changed = *held != next;
+    *held = next;
+    changed
+}
+
+fn preflight_button<A: Action>(
+    action: Option<A>,
+    held: &mut bool,
+    state: ButtonState,
+    report: &mut InputCollectionReport,
+) {
+    if action.is_none() {
+        report.unmapped_events += 1;
+    } else if change_button(held, state) {
+        report.logical_edges += 1;
+    } else {
+        report.suppressed_repeats += 1;
     }
 }
 
@@ -1321,10 +1514,12 @@ mod tests {
             let frame = FrameInputState {
                 held: held.clone(),
                 edges: Vec::new(),
+                pointer: None,
             };
             let fixed = FixedInputState {
                 held,
                 edges: Vec::new(),
+                pointer: None,
             };
             let expected = Vec2::new(
                 f32::from(mask & 0b0010 != 0) - f32::from(mask & 0b0001 != 0),
@@ -1338,6 +1533,7 @@ mod tests {
         let diagonal = FrameInputState {
             held: HashSet::from([TestAction::Right, TestAction::Up]),
             edges: Vec::new(),
+            pointer: None,
         }
         .digital_axis(TEST_AXIS);
         assert_eq!(diagonal, Vec2::ONE);

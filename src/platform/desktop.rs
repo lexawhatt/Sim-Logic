@@ -3,6 +3,11 @@
 //! Run the adapter on the process main thread. The underlying platform may
 //! permit only one event-loop creation for the lifetime of the process.
 
+#[path = "desktop/pointer.rs"]
+mod pointer;
+
+pub use pointer::DesktopPointerError;
+
 use std::{error::Error, fmt, sync::Arc, time::Instant};
 
 use sim_engine::{
@@ -12,7 +17,7 @@ use sim_engine::{
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
     event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
@@ -33,6 +38,8 @@ use crate::{
     },
     render::FrameLimits,
 };
+
+use pointer::DesktopPointerGeometry;
 
 const DEFAULT_TITLE: &str = "Sim;Logic";
 const DEFAULT_WIDTH: f64 = 1_280.0;
@@ -237,11 +244,13 @@ pub enum DesktopRunError {
     },
     /// Sim;Engine could not derive a positive finite logical viewport.
     LogicalViewport(sim_engine::LogicalViewportError),
+    /// Delivered desktop pointer geometry could not form a valid logical sample.
+    Pointer(DesktopPointerError),
     /// Sim;Engine could not create its renderer.
     RendererInitialization(RendererInitError),
-    /// The bounded desktop collector received too many mapped key events.
+    /// The bounded desktop collector received too many mapped input events.
     InputEventLimitExceeded {
-        /// Frozen maximum mapped key events between logical frames.
+        /// Frozen maximum mapped input events between logical frames.
         limit: usize,
     },
     /// The desktop collector could not reserve bounded input storage.
@@ -293,6 +302,7 @@ impl fmt::Display for DesktopRunError {
                 )
             }
             Self::LogicalViewport(error) => write!(formatter, "logical viewport failed: {error}"),
+            Self::Pointer(error) => write!(formatter, "desktop pointer conversion failed: {error}"),
             Self::RendererInitialization(error) => {
                 write!(formatter, "renderer initialization failed: {error}")
             }
@@ -329,6 +339,7 @@ impl Error for DesktopRunError {
             Self::RendererConfiguration(error) => Some(error),
             Self::RendererConfigurationAfterFrame { error, .. } => Some(error),
             Self::LogicalViewport(error) => Some(error),
+            Self::Pointer(error) => Some(error),
             Self::RendererInitialization(error) => Some(error),
             Self::BeginFrame(error) => Some(error),
             Self::Presentation { error, .. } => Some(error),
@@ -374,6 +385,7 @@ struct DesktopHost<A: Action> {
     pending_events: Vec<InputEvent>,
     input_failure: Option<InputBufferFailure>,
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
+    pointer_geometry: DesktopPointerGeometry,
     window_occluded: bool,
     surface_waiting: bool,
     last_frame: Instant,
@@ -398,6 +410,7 @@ impl<A: Action> DesktopHost<A> {
             pending_events: Vec::new(),
             input_failure: None,
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
+            pointer_geometry: DesktopPointerGeometry::empty(),
             window_occluded: false,
             surface_waiting: false,
             last_frame: Instant::now(),
@@ -417,16 +430,27 @@ impl<A: Action> DesktopHost<A> {
         let Some(key) = map_key(event.physical_key) else {
             return;
         };
-        let state = match event.state {
-            ElementState::Pressed => ButtonState::Pressed,
-            ElementState::Released => ButtonState::Released,
-        };
-        self.collect_physical_key(key, state);
+        self.collect_physical_key(key, map_button_state(event.state));
     }
 
     fn collect_physical_key(&mut self, key: PhysicalKeyCode, state: ButtonState) {
         self.held_keys[physical_key_index(key)] = state == ButtonState::Pressed;
-        if self.pending_events.len() == self.input_event_limit {
+        self.collect_input(InputEvent::key(key, state));
+    }
+
+    fn collect_input(&mut self, event: InputEvent) {
+        if self.input_failure.is_some() {
+            return;
+        }
+        // Only the trailing continuous sample is replaceable. A key, button,
+        // or leave event keeps all preceding pointer geometry causal.
+        if matches!(event, InputEvent::PointerMoved { .. })
+            && let Some(last @ InputEvent::PointerMoved { .. }) = self.pending_events.last_mut()
+        {
+            *last = event;
+            return;
+        }
+        if self.pending_events.len() >= self.input_event_limit {
             self.input_failure = Some(InputBufferFailure::Limit);
             return;
         }
@@ -434,7 +458,46 @@ impl<A: Action> DesktopHost<A> {
             self.input_failure = Some(InputBufferFailure::Allocation);
             return;
         }
-        self.pending_events.push(InputEvent::key(key, state));
+        self.pending_events.push(event);
+    }
+
+    fn collect_cursor(
+        &mut self,
+        position: PhysicalPosition<f64>,
+    ) -> Result<(), DesktopPointerError> {
+        let event = self.pointer_geometry.cursor_moved(position)?;
+        self.collect_input(event);
+        Ok(())
+    }
+
+    fn collect_mouse_button(&mut self, button: winit::event::MouseButton, state: ElementState) {
+        if let Some(button) = pointer::map_mouse_button(button) {
+            self.collect_input(InputEvent::mouse_button(button, map_button_state(state)));
+        }
+    }
+
+    fn collect_pointer_left(&mut self) {
+        let event = self.pointer_geometry.cursor_left();
+        self.collect_input(event);
+    }
+
+    fn collect_resize(&mut self, size: PhysicalSize<u32>) -> Result<(), DesktopPointerError> {
+        if let Some(event) = self.pointer_geometry.resized(size)? {
+            self.collect_input(event);
+        }
+        Ok(())
+    }
+
+    fn collect_scale_factor(&mut self, scale_factor: f64) -> Result<(), DesktopPointerError> {
+        if let Some(event) = self.pointer_geometry.scale_factor_changed(scale_factor)? {
+            self.collect_input(event);
+        }
+        Ok(())
+    }
+
+    fn collect_focus_loss(&mut self) {
+        self.release_all_keys();
+        self.collect_pointer_left();
     }
 
     fn release_all_keys(&mut self) {
@@ -446,6 +509,9 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        if self.fatal.is_some() {
+            return;
+        }
         if let Some(failure) = self.input_failure {
             let error = match failure {
                 InputBufferFailure::Limit => DesktopRunError::InputEventLimitExceeded {
@@ -634,20 +700,21 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn resize_renderer(&mut self) -> Result<(), RendererConfigurationError> {
-        let Some(window) = self.window.as_ref() else {
-            return Ok(());
-        };
         let Some(renderer) = self.renderer.as_mut() else {
             return Ok(());
         };
-        let size = window.inner_size();
-        renderer.resize_with_scale_factor(size.width, size.height, window.scale_factor())
+        let size = self.pointer_geometry.physical_size();
+        renderer.resize_with_scale_factor(
+            size.width,
+            size.height,
+            self.pointer_geometry.scale_factor(),
+        )
     }
 }
 
 impl<A: Action> ApplicationHandler for DesktopHost<A> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.fatal.is_some() || self.window.is_some() {
             return;
         }
         let attributes = Window::default_attributes()
@@ -664,14 +731,21 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             }
         };
         let size = window.inner_size();
-        let options =
-            match WgpuRendererOptions::new(self.config.present_mode, window.scale_factor()) {
-                Ok(options) => options,
-                Err(error) => {
-                    self.stop(event_loop, DesktopRunError::RendererConfiguration(error));
-                    return;
-                }
-            };
+        let scale_factor = window.scale_factor();
+        self.pointer_geometry = match DesktopPointerGeometry::new(size, scale_factor) {
+            Ok(geometry) => geometry,
+            Err(error) => {
+                self.stop(event_loop, DesktopRunError::Pointer(error));
+                return;
+            }
+        };
+        let options = match WgpuRendererOptions::new(self.config.present_mode, scale_factor) {
+            Ok(options) => options,
+            Err(error) => {
+                self.stop(event_loop, DesktopRunError::RendererConfiguration(error));
+                return;
+            }
+        };
         let mut renderer = match pollster::block_on(WgpuRenderer::new_with_options(
             Arc::clone(&window),
             size.width.max(1),
@@ -698,6 +772,11 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Exit requests need not discard platform callbacks already queued.
+        // A failed geometry conversion must never be followed by another frame.
+        if self.fatal.is_some() {
+            return;
+        }
         let Some(window) = self.window.as_ref() else {
             return;
         };
@@ -708,9 +787,22 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => event_loop.exit(),
             WindowEvent::KeyboardInput { event, .. } => self.collect_key(event),
-            WindowEvent::Focused(false) => self.release_all_keys(),
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Err(error) = self.collect_cursor(position) {
+                    self.stop(event_loop, DesktopRunError::Pointer(error));
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.collect_mouse_button(button, state)
+            }
+            WindowEvent::CursorLeft { .. } => self.collect_pointer_left(),
+            WindowEvent::Focused(false) => self.collect_focus_loss(),
             WindowEvent::Focused(true) => self.surface_waiting = false,
             WindowEvent::Resized(size) => {
+                if let Err(error) = self.collect_resize(size) {
+                    self.stop(event_loop, DesktopRunError::Pointer(error));
+                    return;
+                }
                 self.window_occluded = extent_is_occluded(size.width, size.height);
                 if !self.window_occluded {
                     self.surface_waiting = false;
@@ -720,6 +812,10 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if let Err(error) = self.collect_scale_factor(scale_factor) {
+                    self.stop(event_loop, DesktopRunError::Pointer(error));
+                    return;
+                }
                 if let Some(renderer) = self.renderer.as_mut()
                     && let Err(error) = renderer.set_scale_factor(scale_factor)
                 {
@@ -897,6 +993,13 @@ fn map_key(key: PhysicalKey) -> Option<PhysicalKeyCode> {
     }
 }
 
+const fn map_button_state(state: ElementState) -> ButtonState {
+    match state {
+        ElementState::Pressed => ButtonState::Pressed,
+        ElementState::Released => ButtonState::Released,
+    }
+}
+
 fn snapshot_is_fresh(
     report: Option<crate::identity::WorldGeneration>,
     snapshot: Option<crate::identity::WorldGeneration>,
@@ -935,6 +1038,10 @@ fn validate_logical_size(width: f64, height: f64) -> Result<(), DesktopConfigErr
         Err(DesktopConfigError::InvalidLogicalSize { width, height })
     }
 }
+
+#[cfg(test)]
+#[path = "desktop/pointer_tests.rs"]
+mod pointer_tests;
 
 #[cfg(test)]
 mod tests {

@@ -25,6 +25,8 @@ The first experimental slice can:
 - pass bounded typed events between ordered systems in one stage invocation;
 - keep explicitly registered typed Application Resources across World replacement;
 - map W/A/S/D, arrows, Space, Enter, and Escape to application-defined actions;
+- map left, right, and middle mouse buttons to actions with click-time pointer
+  samples and explicit screen-to-world coordinate conversion;
 - find live same-shape overlaps among typed circular colliders and among
   axis-aligned rectangular colliders;
 - optionally integrate finite `LinearVelocity2d` components during fixed
@@ -423,6 +425,17 @@ then a later system reads that event and updates the score.
 
 ```bash
 cargo run --release --example coin_pickup
+```
+
+`click_to_place` places a circle for each left-button press with a known
+pointer position, clears with right-click, and exits with Escape. It keeps a
+static camera and at most 128 placed circles. Each press retains its own
+logical position and viewport through delayed fixed updates. See the
+[pointer input guide](DOCUMENTATION/Pointer-Input.md) for the public API,
+desktop geometry handling, and limits.
+
+```bash
+cargo run --release --example click_to_place
 ```
 
 `LineVisual` draws a world-axis vector from an entity's interpolated
@@ -904,6 +917,7 @@ cargo bench --bench headless_runtime --no-default-features -- --insert-only
 cargo bench --bench headless_runtime --no-default-features -- --remove-only
 cargo bench --bench headless_runtime --no-default-features -- --enablement-only
 cargo bench --bench headless_runtime --no-default-features -- --exit-only
+cargo bench --bench headless_runtime --no-default-features -- --pointer-only
 ```
 
 It reports World build and steady-state frame time for 0, 100, 1,000, and
@@ -928,6 +942,12 @@ input shapes, each exercised with W and
 ArrowUp, require zero runtime allocator calls for held and alternating-edge
 input across zero-, one-, and four-tick frames while exact checksums verify
 that both update stages still receive the intended snapshots. A separate
+pointer gate holds all 14 supported physical controls on distinct actions,
+moves the pointer, and releases the mouse buttons through a leave event. Its
+100 warmed cycles each run one-, zero-, and four-tick frames, require zero
+allocator calls, and verify exact delivery checksums. This measures the
+headless input/frame path, not desktop event collection or object spawning.
+A separate
 four-wall circle-against-rectangle collision gate requires zero allocator calls
 across 100 warmed fixed frames and verifies both the blocked-branch checksum
 and final mover position. The exit-only gate checks that a warmed payload-free

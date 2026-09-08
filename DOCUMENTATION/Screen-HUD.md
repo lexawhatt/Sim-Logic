@@ -135,8 +135,9 @@ generation as it would for any other snapshot.
 
 ## What this does not provide
 
-There are no rounded screen rectangles, text or font loading, buttons,
-pointer input, hit testing, focus, nested layouts, or clipping trees yet.
-Drawing a rectangle does not make it capture input. It belongs to the active
+There are no rounded screen rectangles, text or font loading, UI buttons,
+hit testing, UI focus, nested layouts, or clipping trees yet.
+[Pointer input](Pointer-Input.md) is available, but drawing a rectangle does
+not make it capture input. It belongs to the active
 World and disappears on World replacement; it is not an application-owned
 error overlay.

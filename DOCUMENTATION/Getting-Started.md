@@ -33,6 +33,7 @@ examples add one useful idea at a time:
 | `persistent_score` | Keeping Application Resources across World replacement. |
 | `acceleration_vectors` | Ordered acceleration and velocity updates, plus vector drawing. |
 | `screen_hud` | A screen-fixed status panel that keeps updating during pause. |
+| `click_to_place` | Placing bounded objects from click-time pointer coordinates. |
 
 Run any of them with `cargo run --release --example <name>`.
 

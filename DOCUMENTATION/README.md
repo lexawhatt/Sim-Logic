@@ -16,6 +16,8 @@ future API. The project is experimental and public APIs can still change.
   fixed time, pause, and World replacement.
 - [Screen-fixed panels](Screen-HUD.md): draw a simple status panel that stays
   in place while the World camera moves.
+- [Pointer input](Pointer-Input.md): bind mouse buttons, preserve click-time
+  coordinates, and place objects using an explicit camera.
 - [Repository README](../README.md): individual helpers and their limits.
 - [Examples](../examples): complete applications with ordinary Rust game logic.
 
@@ -44,6 +46,10 @@ There is one active World and one desktop window. Systems run sequentially.
 World factories are synchronous and accept no runtime payload. There is no
 Behavior interface, editor, general UI toolkit, asset-loading pipeline, or
 application-level `Faulted` recovery schedule yet.
+
+Pointer input covers cursor movement and left, right, and middle buttons.
+There is no pointer capture, wheel, touch, pen, text entry, UI focus, or
+built-in hit testing.
 
 Headless tests need neither a window nor a GPU. The desktop examples currently
 target the Linux/Vulkan path; this is not a claim that every platform and

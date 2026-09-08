@@ -52,6 +52,11 @@ name = "screen_hud"
 path = "examples/screen_hud/main.rs"
 required-features = ["desktop"]
 
+[[example]]
+name = "click_to_place"
+path = "examples/click_to_place/main.rs"
+required-features = ["desktop"]
+
 [[bench]]
 name = "headless_runtime"
 harness = false

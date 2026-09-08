@@ -16,6 +16,8 @@ use sim_logic::prelude::*;
 
 #[path = "headless_runtime/pause.rs"]
 mod pause;
+#[path = "headless_runtime/pointer.rs"]
+mod pointer;
 #[path = "headless_runtime/screen.rs"]
 mod screen;
 
@@ -2943,6 +2945,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Sim;Logic mixed world/screen allocation gate");
         return screen::run_allocation_case();
     }
+    if std::env::args().any(|argument| argument == "--pointer-only") {
+        println!("Sim;Logic pointer-input allocation gate");
+        return pointer::run_allocation_case();
+    }
     if std::env::args().any(|argument| argument == "--world-build-only") {
         println!("Sim;Logic managed World-build benchmark");
         run_managed_idle_case()?;
@@ -2994,6 +3000,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_exit_allocation_case()?;
     pause::run_allocation_case()?;
     screen::run_allocation_case()?;
+    pointer::run_allocation_case()?;
     run_event_case()?;
     run_resource_access_case(false)?;
     run_resource_access_case(true)?;
