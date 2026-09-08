@@ -67,11 +67,20 @@ The first experimental slice can:
   into one bounded Sim;Engine scene;
 - draw screen-fixed rectangle panels above that scene, with logical-pixel
   layout that keeps updating while simulation is paused;
+- register bounded immutable RGBA8 assets and draw screen images with source
+  regions, tint, filtering, and shared rectangle/image ordering;
 - commit A-to-B World replacement and extract B in the same logical frame.
 
 This is not a finished general-purpose engine. Generic transition payloads,
-asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit, retained render
-resources, and parallel schedules are deliberately not public yet.
+asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit,
+managed text and 3D resources, audio, and parallel schedules are deliberately
+not public yet.
+
+Try the image path with `cargo run --release --example image_board`.
+WASD/arrows move an image, Space changes its source region, Enter opens an
+alternate World sharing the same pixels, and Escape exits. The
+[screen-image guide](DOCUMENTATION/Screen-Images.md) explains registration,
+explicit rendering limits, memory, and headless inspection.
 
 ## Small example
 
@@ -279,9 +288,10 @@ world.spawn(panel)?;
 
 The default allows 256 screen rectangles. World and screen scenes publish as
 one snapshot: a failure in either cannot publish half a new frame. Screen
-layers always follow World layers; an empty screen scene uses no extra render
-pass. These are presentation primitives, not text, buttons, mouse handling,
-or a layout tree.
+layers always follow World layers. Without images, nonempty screen rectangles
+use one extra pass and empty screen content uses none. Images can split that
+rectangle pass into ordered runs. These are presentation primitives, not text,
+buttons, mouse handling, or a layout tree.
 
 Run `cargo run --release --example screen_hud` to see a moving World with a
 fixed status panel and progress bar. Space pauses/resumes; the activity

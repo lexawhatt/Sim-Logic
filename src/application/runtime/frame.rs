@@ -254,6 +254,7 @@ impl<A: Action> HeadlessRunner<A> {
                     alpha as f32,
                     self.config.render(),
                     &mut self.extraction,
+                    &self.images,
                 ) {
                     Ok(()) => {
                         report.extracted_generation = self.extraction.publish();

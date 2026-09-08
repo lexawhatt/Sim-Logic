@@ -13,13 +13,14 @@ use bevy_ecs::{
 
 use crate::{
     ExtractionError,
+    assets::ImageAssetRegistry,
     extraction::{
         CircleSource, ExtractionBuffers, ExtractionParameters, LineSource, RectangleSource,
-        ScreenRectangleSource,
+        ScreenImageSource, ScreenRectangleSource, ScreenSource,
     },
     identity::ManagedEntity,
     render::RenderLimits,
-    screen::ScreenRectangleVisual,
+    screen::{ScreenImageVisual, ScreenRectangleVisual},
     visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, WorldBackground,
     },
@@ -66,6 +67,10 @@ type ScreenRectangleExtractionQuery = QueryState<
     ),
     (Allow<Disabled>, Without<Disabled>),
 >;
+type ScreenImageExtractionQuery = QueryState<
+    (Entity, &'static ManagedEntity, &'static ScreenImageVisual),
+    (Allow<Disabled>, Without<Disabled>),
+>;
 type TransformInterpolationQuery =
     QueryState<(Entity, &'static ManagedEntity, &'static mut Transform2d), Allow<Disabled>>;
 type CameraSnapQuery = QueryState<&'static mut ActiveCamera2d, Allow<Disabled>>;
@@ -92,6 +97,7 @@ pub(super) struct ExtractionQueries {
     rectangles: RectangleExtractionQuery,
     lines: LineExtractionQuery,
     screen_rectangles: ScreenRectangleExtractionQuery,
+    screen_images: ScreenImageExtractionQuery,
 }
 
 impl ExtractionQueries {
@@ -102,6 +108,7 @@ impl ExtractionQueries {
             rectangles: world.query_filtered(),
             lines: world.query_filtered(),
             screen_rectangles: world.query_filtered(),
+            screen_images: world.query_filtered(),
         }
     }
 }
@@ -214,6 +221,7 @@ pub(super) fn stage_runtime_world(
     alpha: f32,
     limits: RenderLimits,
     extraction: &mut ExtractionBuffers,
+    images: &ImageAssetRegistry,
 ) -> Result<(), ExtractionError> {
     let background = runtime
         .world
@@ -244,13 +252,22 @@ pub(super) fn stage_runtime_world(
         .extraction_queries
         .screen_rectangles
         .iter(&runtime.world)
-        .map(|(raw, entity, visual)| ScreenRectangleSource::new(entity.handle(raw), visual));
+        .map(|(raw, entity, visual)| {
+            ScreenSource::Rectangle(ScreenRectangleSource::new(entity.handle(raw), visual))
+        });
+    let screen_images = runtime
+        .extraction_queries
+        .screen_images
+        .iter(&runtime.world)
+        .map(|(raw, entity, visual)| {
+            ScreenSource::Image(ScreenImageSource::new(entity.handle(raw), visual, images))
+        });
     extraction.stage(
         ExtractionParameters::new(runtime.generation, background, alpha, limits),
         cameras,
         circles,
         rectangles,
         lines,
-        screen_rectangles,
+        screen_rectangles.chain(screen_images),
     )
 }

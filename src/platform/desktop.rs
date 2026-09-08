@@ -3,9 +3,12 @@
 //! Run the adapter on the process main thread. The underlying platform may
 //! permit only one event-loop creation for the lifetime of the process.
 
+#[path = "desktop/images.rs"]
+mod images;
 #[path = "desktop/pointer.rs"]
 mod pointer;
 
+pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
 
 use std::{error::Error, fmt, sync::Arc, time::Instant};
@@ -39,6 +42,7 @@ use crate::{
     render::FrameLimits,
 };
 
+use images::{DesktopImages, ScreenPresentationError};
 use pointer::DesktopPointerGeometry;
 
 const DEFAULT_TITLE: &str = "Sim;Logic";
@@ -276,6 +280,15 @@ pub enum DesktopRunError {
         /// Canonical logical outcome that preceded the presentation failure.
         logic_frame: Box<LogicFrameReport>,
     },
+    /// Preparing an uncached screen image failed after the logical frame
+    /// completed. Previously uploaded immutable assets can remain cached;
+    /// the adapter does not present a partially composed frame.
+    ImagePreparation {
+        /// Source-attributed image or cache preparation failure.
+        error: DesktopImageError,
+        /// Canonical logical outcome that preceded image preparation.
+        logic_frame: Box<LogicFrameReport>,
+    },
     /// The one permitted recovery attempt for a lost surface failed after the
     /// logical frame had already completed.
     Recovery {
@@ -325,6 +338,9 @@ impl fmt::Display for DesktopRunError {
             Self::Presentation { error, .. } => {
                 write!(formatter, "frame presentation failed: {error}")
             }
+            Self::ImagePreparation { error, .. } => {
+                write!(formatter, "desktop image preparation failed: {error}")
+            }
             Self::Recovery { error, .. } => write!(formatter, "renderer recovery failed: {error}"),
         }
     }
@@ -343,6 +359,7 @@ impl Error for DesktopRunError {
             Self::RendererInitialization(error) => Some(error),
             Self::BeginFrame(error) => Some(error),
             Self::Presentation { error, .. } => Some(error),
+            Self::ImagePreparation { error, .. } => Some(error),
             Self::Recovery { error, .. } => Some(error),
             Self::InputEventLimitExceeded { .. }
             | Self::InputBufferAllocationFailed
@@ -382,6 +399,7 @@ struct DesktopHost<A: Action> {
     frame_budget: FrameBudget,
     window: Option<Arc<Window>>,
     renderer: Option<WgpuRenderer>,
+    images: DesktopImages,
     pending_events: Vec<InputEvent>,
     input_failure: Option<InputBufferFailure>,
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
@@ -407,6 +425,7 @@ impl<A: Action> DesktopHost<A> {
             frame_budget,
             window: None,
             renderer: None,
+            images: DesktopImages::new(),
             pending_events: Vec::new(),
             input_failure: None,
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
@@ -606,7 +625,32 @@ impl<A: Action> DesktopHost<A> {
             self.stop(event_loop, DesktopRunError::RuntimeInvariant);
             return;
         };
-        let presentation = present_extracted(renderer, extracted, self.frame_budget);
+        let presentation = if extracted.resolved_screen_images().is_empty() {
+            present_extracted(renderer, extracted, self.frame_budget)
+                .map_err(ScreenPresentationError::Composition)
+        } else {
+            images::present(
+                renderer,
+                extracted,
+                self.runner.image_assets(),
+                &mut self.images,
+                self.frame_budget,
+            )
+        };
+        let presentation = match presentation {
+            Ok(report) => Ok(report),
+            Err(ScreenPresentationError::Composition(error)) => Err(error),
+            Err(ScreenPresentationError::Images(error)) => {
+                self.stop(
+                    event_loop,
+                    DesktopRunError::ImagePreparation {
+                        error,
+                        logic_frame: Box::new(report),
+                    },
+                );
+                return;
+            }
+        };
         match presentation {
             Ok(render_report) => {
                 self.report.last_render_frame = Some(render_report);
@@ -647,6 +691,7 @@ impl<A: Action> DesktopHost<A> {
                     };
                     match pollster::block_on(renderer.recover_device_and_surface()) {
                         Ok(()) => {
+                            self.images.clear();
                             self.report.device_recoveries =
                                 self.report.device_recoveries.saturating_add(1);
                             if reset_wall_clock_on_success {
@@ -763,6 +808,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         self.window_occluded = extent_is_occluded(size.width, size.height);
         self.last_frame = Instant::now();
         self.window = Some(window);
+        self.images.clear();
         self.renderer = Some(renderer);
     }
 

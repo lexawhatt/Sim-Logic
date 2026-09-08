@@ -1,9 +1,10 @@
 //! Atomic CPU extraction into bounded Sim;Engine visual state.
 
 use crate::{
+    assets::ImageAssetId,
     identity::{LogicEntity, WorldGeneration},
     render::RenderLimits,
-    screen::ScreenVisualError,
+    screen::{ImageVisualError, ScreenVisualError},
     visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, VisualValueError,
         line_stroke_style,
@@ -16,9 +17,9 @@ use std::{cmp::Ordering, error::Error, fmt, mem::size_of};
 
 #[path = "extraction/screen.rs"]
 mod screen;
-pub use screen::ResolvedScreenRectangle;
 use screen::ScreenExtractionBuffer;
-pub(crate) use screen::ScreenRectangleSource;
+pub use screen::{ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw};
+pub(crate) use screen::{ScreenImageSource, ScreenRectangleSource, ScreenSource};
 
 /// One fully resolved circle retained for headless parity and diagnostics.
 ///
@@ -268,6 +269,34 @@ impl ExtractedFrame {
         self.storage.screen.resolved()
     }
 
+    /// Returns current screen images in their relative mixed-screen order.
+    ///
+    /// Records contain immutable asset IDs, not GPU resources. Use
+    /// `HeadlessRunner::image_asset` to inspect the registered source pixels.
+    pub fn resolved_screen_images(&self) -> &[ResolvedScreenImage] {
+        self.storage.screen.images()
+    }
+
+    /// Returns the exact screen composition after the world scene.
+    ///
+    /// Contiguous rectangle runs and individual images share layer, depth,
+    /// and stable source order. On an exact same-source tie the rectangle is
+    /// first. Empty screen content produces no items. This plan does not
+    /// replace the desktop compositor's aggregate budget checks.
+    pub fn screen_draws(&self) -> &[ScreenDraw] {
+        self.storage.screen.draws()
+    }
+
+    /// Returns the sorted rectangle records for one run in `screen_draws`.
+    pub fn screen_rectangle_run_records(&self, run: usize) -> Option<&[ResolvedScreenRectangle]> {
+        self.storage.screen.run_records(run)
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) fn screen_rectangle_run(&self, run: usize) -> Option<&sim_engine::ScreenScene> {
+        self.storage.screen.run_scene(run)
+    }
+
     /// Returns the camera-independent scene for the optional desktop bridge.
     #[cfg(feature = "desktop")]
     pub(crate) fn screen_scene(&self) -> &sim_engine::ScreenScene {
@@ -346,7 +375,7 @@ impl ExtractionBuffers {
         circles: impl IntoIterator<Item = CircleSource>,
         rectangles: impl IntoIterator<Item = RectangleSource>,
         lines: impl IntoIterator<Item = LineSource>,
-        screen_rectangles: impl IntoIterator<Item = ScreenRectangleSource>,
+        screen_rectangles: impl IntoIterator<Item = ScreenSource>,
     ) -> Result<(), ExtractionError> {
         self.staged = None;
         let mut spare = match self.spare.take() {
@@ -460,6 +489,25 @@ pub enum ExtractionError {
         /// Maximum number of screen rectangles accepted in one extraction.
         limit: usize,
     },
+    /// The opted-in enabled screen-image source count was exceeded.
+    ScreenImageLimitExceeded {
+        /// Configured image source limit (zero by default).
+        limit: usize,
+    },
+    /// An image handle was not registered by this Application.
+    UnregisteredImageAsset {
+        /// Managed source of the invalid reference.
+        entity: LogicEntity,
+        /// Rejected immutable image handle.
+        image: ImageAssetId,
+    },
+    /// An image component violated its geometry, tint, or source-region contract.
+    InvalidScreenImage {
+        /// Managed source whose visual was rejected.
+        entity: LogicEntity,
+        /// Exact component validation failure.
+        error: ImageVisualError,
+    },
     /// A screen visual violated its validated logical-pixel contract.
     InvalidScreenVisual {
         /// Managed entity whose screen visual was rejected.
@@ -526,6 +574,18 @@ impl fmt::Display for ExtractionError {
                 formatter,
                 "extracted screen rectangle count exceeds the limit of {limit}"
             ),
+            Self::ScreenImageLimitExceeded { limit } => write!(
+                formatter,
+                "extracted screen image count exceeds the limit of {limit}"
+            ),
+            Self::UnregisteredImageAsset { entity, image } => write!(
+                formatter,
+                "screen image entity {entity:?} references unregistered image {image:?}"
+            ),
+            Self::InvalidScreenImage { entity, error } => write!(
+                formatter,
+                "screen image entity {entity:?} is invalid: {error}"
+            ),
             Self::InvalidScreenVisual { entity, error } => write!(
                 formatter,
                 "screen visual entity {entity:?} is invalid: {error}"
@@ -549,6 +609,7 @@ impl Error for ExtractionError {
             Self::Scene(error) => Some(error),
             Self::ScreenScene(error) => Some(error),
             Self::InvalidScreenVisual { error, .. } => Some(error),
+            Self::InvalidScreenImage { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -673,7 +734,7 @@ fn extract_frame_into(
     circles: impl IntoIterator<Item = CircleSource>,
     rectangles: impl IntoIterator<Item = RectangleSource>,
     lines: impl IntoIterator<Item = LineSource>,
-    screen_rectangles: impl IntoIterator<Item = ScreenRectangleSource>,
+    screen_rectangles: impl IntoIterator<Item = ScreenSource>,
 ) -> Result<ExtractedMetadata, ExtractionError> {
     let ExtractionParameters {
         world_generation,

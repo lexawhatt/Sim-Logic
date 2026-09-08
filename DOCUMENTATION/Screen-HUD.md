@@ -119,8 +119,10 @@ components it owns. Commands follow the ordinary stage barrier rules.
 
 All screen rectangles draw above all World visuals, even if a World primitive
 has a higher layer. Within the screen scene, layer, draw-order depth, and
-stable source identity determine order. An empty screen scene adds no extra
-render pass; a nonempty one follows the World pass.
+stable source identity determine order. Without screen images, an empty screen
+scene adds no extra render pass; a nonempty one follows the World pass.
+[Images](Screen-Images.md) share this ordering and can split rectangles into
+several contiguous runs, with an image source between runs.
 
 The default limit is 256 screen rectangles. `RenderLimits` exposes
 `with_max_screen_rectangles` and `with_screen_scene_budget` for changing the

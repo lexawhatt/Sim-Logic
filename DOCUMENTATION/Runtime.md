@@ -222,9 +222,15 @@ World. It uses top-left logical pixel coordinates, requires no `Transform2d`,
 and can be changed directly in FrameUpdate. It is a building block for status
 panels, not a clickable widget. See [screen-fixed panels](Screen-HUD.md).
 
-The current path rebuilds the scene using reusable buffers. It is not a
-retained-resource or diff-patching API. Some warmed workloads have allocation
-tests, but arbitrary application Systems are not promised to allocate nothing.
+`ScreenImageVisual` adds immutable registered images with source regions,
+tint, and filtering. Images and rectangles share a screen draw order. Their
+pixels survive World replacement, and the desktop host caches prepared Engine
+images. See [screen images](Screen-Images.md) for explicit limits and ownership.
+
+Extraction rebuilds draw plans using reusable buffers; it does not patch only
+changed components. Immutable image resources are retained separately from
+those per-frame plans. Some warmed workloads have allocation tests, but
+arbitrary application Systems are not promised to allocate nothing.
 
 `FrameOutcome::Rejected` means frame inputs were refused before the frame
 changed live state. `FrameOutcome::Advanced` means it started; inspect its

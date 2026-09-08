@@ -14,6 +14,8 @@ use sim_engine::SceneBudget;
 use sim_logic::bevy_ecs::entity_disabling::Disabled;
 use sim_logic::prelude::*;
 
+#[path = "headless_runtime/images.rs"]
+mod images;
 #[path = "headless_runtime/pause.rs"]
 mod pause;
 #[path = "headless_runtime/pointer.rs"]
@@ -2945,6 +2947,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Sim;Logic mixed world/screen allocation gate");
         return screen::run_allocation_case();
     }
+    if std::env::args().any(|argument| argument == "--images-only") {
+        println!("Sim;Logic warmed CPU screen image allocation gate");
+        return images::run_allocation_case();
+    }
     if std::env::args().any(|argument| argument == "--pointer-only") {
         println!("Sim;Logic pointer-input allocation gate");
         return pointer::run_allocation_case();
@@ -3000,6 +3006,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_exit_allocation_case()?;
     pause::run_allocation_case()?;
     screen::run_allocation_case()?;
+    images::run_allocation_case()?;
     pointer::run_allocation_case()?;
     run_event_case()?;
     run_resource_access_case(false)?;

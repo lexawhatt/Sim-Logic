@@ -6,6 +6,7 @@
 use crate::{
     ExtractedFrame,
     app::RegisteredWorldFactory,
+    assets::{ImageAsset, ImageAssetId, ImageAssetRegistry},
     component::ComponentRegistry,
     events::EventRegistry,
     extraction::ExtractionBuffers,
@@ -34,6 +35,7 @@ pub struct HeadlessRunner<A: Action> {
     components: ComponentRegistry,
     events: EventRegistry,
     application_resources: ApplicationResourceRegistry,
+    images: ImageAssetRegistry,
     factories: Vec<RegisteredWorldFactory>,
     startup_factories: StageFactories,
     fixed_factories: StageFactories,
@@ -49,6 +51,32 @@ pub struct HeadlessRunner<A: Action> {
 }
 
 impl<A: Action> HeadlessRunner<A> {
+    /// Reads registered immutable pixels, including assets not currently drawn.
+    ///
+    /// Foreign handles return None. Asset identity and contents survive World
+    /// replacement; inspection never initializes a renderer or decodes a file.
+    pub fn image_asset(&self, image: ImageAssetId) -> Option<&ImageAsset> {
+        self.images.get(image)
+    }
+
+    /// Returns immutable setup-time image registrations, including unused assets.
+    pub fn image_asset_count(&self) -> usize {
+        self.images.len()
+    }
+
+    /// Returns CPU pixel Vec capacity retained by registered image assets.
+    ///
+    /// This excludes bounded registry metadata and the desktop renderer's
+    /// separate recovery copies and GPU textures. It is not total process memory.
+    pub fn image_pixel_bytes(&self) -> usize {
+        self.images.pixel_bytes()
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) const fn image_assets(&self) -> &ImageAssetRegistry {
+        &self.images
+    }
+
     /// Returns the last atomically published CPU snapshot.
     ///
     /// The value may belong to a retired generation and is then diagnostic

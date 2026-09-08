@@ -16,6 +16,8 @@ future API. The project is experimental and public APIs can still change.
   fixed time, pause, and World replacement.
 - [Screen-fixed panels](Screen-HUD.md): draw a simple status panel that stays
   in place while the World camera moves.
+- [Screen images](Screen-Images.md): register bounded immutable pixels, crop
+  and tint their placements, and share assets across World replacement.
 - [Pointer input](Pointer-Input.md): bind mouse buttons, preserve click-time
   coordinates, and place objects using an explicit camera.
 - [Iron Maze](Iron-Maze.md): play a small 2.5D shooter and follow its fixed

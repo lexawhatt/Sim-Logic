@@ -164,6 +164,7 @@ pub struct RenderLimits {
     max_world_rectangles: usize,
     max_world_lines: usize,
     max_screen_rectangles: usize,
+    max_screen_images: usize,
     world_scene_budget: SceneBudget,
     screen_scene_budget: SceneBudget,
     frame_limits: FrameLimits,
@@ -186,6 +187,7 @@ impl RenderLimits {
             max_world_rectangles: DEFAULT_MAX_WORLD_RECTANGLES,
             max_world_lines: DEFAULT_MAX_WORLD_LINES,
             max_screen_rectangles: DEFAULT_MAX_SCREEN_RECTANGLES,
+            max_screen_images: 0,
             world_scene_budget,
             screen_scene_budget: DEFAULT_SCREEN_SCENE_BUDGET,
             frame_limits,
@@ -213,6 +215,27 @@ impl RenderLimits {
     /// Returns the maximum number of enabled managed screen rectangles extracted.
     pub const fn max_screen_rectangles(self) -> usize {
         self.max_screen_rectangles
+    }
+
+    /// Returns the enabled screen-image count limit (zero by default).
+    pub const fn max_screen_images(self) -> usize {
+        self.max_screen_images
+    }
+
+    /// Enables a bounded number of screen images without changing other limits.
+    ///
+    /// The default is zero. Also configure FrameLimits with texture storage
+    /// and enough passes for images interleaved with rectangle runs. Each image
+    /// initially uses one compositor source; this is not an atlas-batch API.
+    pub const fn with_max_screen_images(mut self, limit: usize) -> Self {
+        self.max_screen_images = limit;
+        self
+    }
+
+    /// Replaces only aggregate presentation limits, preserving source/Scene caps.
+    pub const fn with_frame_limits(mut self, limits: FrameLimits) -> Self {
+        self.frame_limits = limits;
+        self
     }
 
     /// Replaces the rectangle staging limit without changing other budgets.

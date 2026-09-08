@@ -43,7 +43,7 @@ fn failed_screen_candidate_cannot_publish_a_partial_frame_and_retry_clears_its_p
         [],
         [],
         [],
-        [old],
+        [old.into()],
     )?;
     assert_eq!(buffers.publish(), Some(old_generation));
     let original = buffers
@@ -57,7 +57,7 @@ fn failed_screen_candidate_cannot_publish_a_partial_frame_and_retry_clears_its_p
         [],
         [],
         [],
-        [candidate, foreign],
+        [candidate.into(), foreign.into()],
     );
     assert!(
         matches!(failed, Err(ExtractionError::ForeignEntity { entity, expected })
@@ -75,7 +75,7 @@ fn failed_screen_candidate_cannot_publish_a_partial_frame_and_retry_clears_its_p
         [],
         [],
         [],
-        [candidate],
+        [candidate.into()],
     )?;
     assert_eq!(buffers.publish(), Some(next_generation));
     let replaced = buffers.published().ok_or("replacement snapshot")?;
@@ -97,7 +97,7 @@ fn screen_clear_reuses_record_and_scene_storage_without_stale_commands()
     let generation = first.entity.world_generation();
     let limits = RenderLimits::default();
     let mut buffer = ScreenExtractionBuffer::new(limits)?;
-    buffer.extract(generation, limits, [first, second])?;
+    buffer.extract(generation, limits, [first.into(), second.into()])?;
     let address = buffer.resolved.as_ptr();
     let capacity = buffer.resolved.capacity();
     let scene_bytes = buffer.scene.allocation_bytes();
@@ -107,7 +107,7 @@ fn screen_clear_reuses_record_and_scene_storage_without_stale_commands()
     assert!(buffer.resolved.is_empty());
     assert_eq!(buffer.scene.command_count(), 0);
     assert_eq!(buffer.scene.statistics().accepted_commands(), 0);
-    buffer.extract(generation, limits, [second])?;
+    buffer.extract(generation, limits, [second.into()])?;
     assert_eq!(buffer.resolved.len(), 1);
     assert_eq!(buffer.resolved[0].source(), second.entity);
     assert_eq!(buffer.scene.command_count(), 1);

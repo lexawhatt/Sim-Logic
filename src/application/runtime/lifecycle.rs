@@ -85,6 +85,7 @@ impl<A: Action> HeadlessRunner<A> {
             components: application.components,
             events: application.events,
             application_resources: application.application_resources,
+            images: application.images,
             factories: application.factories,
             startup_factories: application.startup,
             fixed_factories: application.fixed,
@@ -233,6 +234,7 @@ impl<A: Action> HeadlessRunner<A> {
             0.0,
             self.config.render(),
             &mut self.extraction,
+            &self.images,
         )
         .map_err(CandidateFailure::Extraction)?;
         Ok(runtime_world)

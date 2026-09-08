@@ -5,6 +5,7 @@ use std::{error::Error, fmt, sync::Arc};
 use bevy_ecs::{component::Component, entity_disabling::Disabled, system::SystemParamFunction};
 
 use crate::{
+    assets::{ImageAssetError, ImageAssetId, ImageAssetLimits, ImageAssetRegistry},
     collision::{CircleCollider2d, RectangleCollider2d},
     component::{ComponentApprovalError, ComponentRegistry, ComponentTuple},
     events::EventRegistry,
@@ -21,7 +22,7 @@ use crate::{
     },
     render::RenderLimits,
     resources::{ApplicationResourceError, ApplicationResourceRegistry},
-    screen::ScreenRectangleVisual,
+    screen::{ScreenImageVisual, ScreenRectangleVisual},
     system::{
         Stage, StageFactories, SupportedSystemParamTuple, register_system_application_resources,
         register_system_events,
@@ -59,6 +60,7 @@ pub struct AppConfig {
     lifecycle_trace_limit: usize,
     application_resource_limit: usize,
     render: RenderLimits,
+    images: ImageAssetLimits,
 }
 
 impl Default for AppConfig {
@@ -72,6 +74,7 @@ impl Default for AppConfig {
             lifecycle_trace_limit: DEFAULT_LIFECYCLE_TRACE_LIMIT,
             application_resource_limit: DEFAULT_APPLICATION_RESOURCE_LIMIT,
             render: RenderLimits::default(),
+            images: ImageAssetLimits::default(),
         }
     }
 }
@@ -154,6 +157,15 @@ impl AppConfig {
     /// Replaces renderer-independent extraction and presentation limits.
     pub fn set_render_limits(&mut self, limits: RenderLimits) -> &mut Self {
         self.render = limits;
+        self
+    }
+
+    /// Replaces setup-time image count, dimension, and retained-pixel limits.
+    ///
+    /// Zero limits are valid and disable the corresponding allowance. This
+    /// does not enable screen-image extraction or raise presentation budgets.
+    pub fn set_image_asset_limits(&mut self, limits: ImageAssetLimits) -> &mut Self {
+        self.images = limits;
         self
     }
 
@@ -305,6 +317,7 @@ pub struct Application<A: Action> {
     pub(crate) components: ComponentRegistry,
     pub(crate) events: EventRegistry,
     pub(crate) application_resources: ApplicationResourceRegistry,
+    pub(crate) images: ImageAssetRegistry,
     pub(crate) bindings: ActionBindings<A>,
     pub(crate) factories: Vec<RegisteredWorldFactory>,
     pub(crate) startup: StageFactories,
@@ -338,6 +351,9 @@ impl<A: Action> Application<A> {
             .approve::<ScreenRectangleVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
+            .approve::<ScreenImageVisual>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
+        components
             .approve::<ActiveCamera2d>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
@@ -365,6 +381,7 @@ impl<A: Action> Application<A> {
             components,
             events: EventRegistry::default(),
             application_resources: ApplicationResourceRegistry::default(),
+            images: ImageAssetRegistry::new(application, config.images),
             bindings: ActionBindings::new(),
             factories: Vec::new(),
             startup: StageFactories::default(),
@@ -377,6 +394,24 @@ impl<A: Action> Application<A> {
     pub fn approve_component<T: Component>(&mut self) -> Result<&mut Self, ComponentApprovalError> {
         self.components.approve::<T>()?;
         Ok(self)
+    }
+
+    /// Registers immutable straight-alpha sRGB RGBA8 pixels before startup.
+    ///
+    /// Copies exactly one row-major image after validating dimensions, byte
+    /// length, and configured asset limits. A failed registration publishes no
+    /// handle or pixel entry. Handles belong only to this Application, survive
+    /// World replacement, and are not persistent file identifiers. Registering
+    /// identical pixels twice creates two distinct resources. No GPU or file
+    /// decoder is involved; normal frames never copy these pixels again on the
+    /// CPU side. GPU preparation retains its own recovery copy when needed.
+    pub fn register_image_rgba8(
+        &mut self,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> Result<ImageAssetId, ImageAssetError> {
+        self.images.register(width, height, pixels)
     }
 
     /// Approves a flat tuple of one through fifteen hook-free component types.

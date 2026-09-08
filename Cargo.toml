@@ -62,6 +62,11 @@ name = "iron_maze"
 path = "examples/iron_maze/main.rs"
 required-features = ["desktop"]
 
+[[example]]
+name = "image_board"
+path = "examples/image_board/main.rs"
+required-features = ["desktop"]
+
 [[bench]]
 name = "headless_runtime"
 harness = false

@@ -9,6 +9,8 @@
 
 #[path = "application/app.rs"]
 pub mod app;
+#[path = "assets/mod.rs"]
+pub mod assets;
 #[path = "logic/collision.rs"]
 pub mod collision;
 #[path = "ecs/commands.rs"]
@@ -59,7 +61,7 @@ pub use bevy_ecs;
 pub use component::{ComponentApprovalError, ComponentTuple, LifecycleHook};
 pub use extraction::{
     ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
-    ResolvedScreenRectangle,
+    ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,
 };
 
 /// Convenience result for application code and fallible Systems that combine
@@ -86,6 +88,7 @@ pub mod prelude {
     pub use crate::ComponentTuple;
     pub use crate::LogicResult;
     pub use crate::app::{AppConfig, Application};
+    pub use crate::assets::{ImageAsset, ImageAssetError, ImageAssetId, ImageAssetLimits};
     pub use crate::collision::{
         CircleCollider2d, CircleColliderError, CircleOverlapEntities, RectangleCollider2d,
         RectangleColliderError, RectangleOverlapEntities,
@@ -93,7 +96,8 @@ pub mod prelude {
     pub use crate::commands::{CommandEnqueueError, LogicCommands as Commands};
     #[cfg(feature = "desktop")]
     pub use crate::desktop::{
-        DesktopConfig, DesktopExitReason, DesktopPointerError, DesktopRunError, DesktopRunReport,
+        DesktopConfig, DesktopExitReason, DesktopImageError, DesktopPointerError, DesktopRunError,
+        DesktopRunReport,
     };
     pub use crate::events::{EventReader, EventSendError, EventWriter, WorldEvent};
     pub use crate::headless::{
@@ -116,7 +120,10 @@ pub mod prelude {
     pub use crate::query::{Query, QueryEntityError, QuerySingleError, Single};
     pub use crate::render::{FrameLimits, FrameViewport, RenderLimits};
     pub use crate::resources::{AppRes, AppResMut, ApplicationResourceError};
-    pub use crate::screen::{ScreenRectangleVisual, ScreenVisualError};
+    pub use crate::screen::{
+        ImageFilter, ImageRegion, ImageVisualError, ScreenImageVisual, ScreenRectangleVisual,
+        ScreenVisualError,
+    };
     pub use crate::system::{Stage, SystemRunFailure, SystemSetupError};
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;
@@ -127,6 +134,6 @@ pub mod prelude {
     pub use crate::world::{WorldBuildError, WorldBuilder};
     pub use crate::{
         ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
-        ResolvedScreenRectangle,
+        ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,
     };
 }

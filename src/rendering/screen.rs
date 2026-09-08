@@ -5,6 +5,10 @@ use std::{error::Error, fmt};
 use bevy_ecs::prelude::Component;
 use sim_engine::{Color, Layer, LogicalScreenPosition, LogicalScreenVector};
 
+#[path = "screen/image.rs"]
+mod image;
+pub use image::{ImageFilter, ImageRegion, ImageVisualError, ScreenImageVisual};
+
 /// A filled, square-cornered rectangle positioned in logical screen pixels.
 ///
 /// The origin is the content area's top-left, with x increasing rightward and

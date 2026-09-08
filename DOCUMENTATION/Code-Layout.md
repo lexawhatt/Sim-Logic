@@ -8,6 +8,7 @@ available to users as `sim_logic::input`.
 | Directory | What lives there |
 | --- | --- |
 | [application](../src/application/) | Application setup, input, time, resources, transitions, and the shared runner. |
+| [assets](../src/assets/) | Immutable CPU image registrations, opaque handles, and storage limits. |
 | [ecs](../src/ecs/) | Entity identity, queries, System registration, World construction, events, and Commands. |
 | [logic](../src/logic/) | Generic overlap geometry and opt-in movement helpers. |
 | [rendering](../src/rendering/) | Visual components, CPU extraction, and render limits. |
@@ -47,6 +48,12 @@ transition, or extraction call into the matching file. The
 you to read those internals.
 
 ## Game code and runtime code
+
+The [image board](../examples/image_board/game.rs) shares its setup with
+headless tests. Image registration lives in `assets`, the managed component
+in `rendering/screen`, and mixed draw-plan extraction in `rendering/extraction`.
+Only `platform/desktop/images.rs` owns the Engine GPU cache and presentation.
+Neither World factories nor the CPU registry need a renderer.
 
 [Iron Maze](Iron-Maze.md) shows the same separation at application scale:
 `game.rs` updates the game's state, `level.rs` owns its map geometry, and
