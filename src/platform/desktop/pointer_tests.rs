@@ -62,6 +62,7 @@ fn host(limit: usize) -> Result<DesktopHost<TestAction>, Box<dyn Error>> {
         DesktopConfig::default(),
         limit,
         frame_budget(FrameLimits::default()),
+        ThreeDRenderLimits::default(),
     );
     host.pointer_geometry = DesktopPointerGeometry::new(PhysicalSize::new(800, 600), 1.0)?;
     Ok(host)

@@ -11,6 +11,8 @@
 pub mod app;
 #[path = "assets/mod.rs"]
 pub mod assets;
+#[cfg(feature = "audio")]
+pub mod audio;
 #[path = "logic/collision.rs"]
 pub mod collision;
 #[path = "ecs/commands.rs"]
@@ -43,6 +45,8 @@ pub mod resources;
 pub mod screen;
 #[path = "ecs/system.rs"]
 pub mod system;
+#[path = "rendering/three_d/mod.rs"]
+pub mod three_d;
 #[path = "application/time.rs"]
 pub mod time;
 #[path = "application/transition.rs"]
@@ -81,8 +85,9 @@ pub mod prelude {
     #[cfg(feature = "desktop")]
     pub use sim_engine::RendererPresentMode;
     pub use sim_engine::{
-        Camera2d, Camera2dError, Color, LogicalScreenPosition, LogicalScreenVector,
-        LogicalViewport, Vec2,
+        Camera2d, Camera2dError, Camera3d, Color, LogicalPixels, LogicalScreenPosition,
+        LogicalScreenVector, LogicalViewport, Rotation3d, Transform3d, Vec2, Vec3,
+        WireframeStyle3d, WorldLength,
     };
 
     pub use crate::ComponentTuple;
@@ -97,7 +102,7 @@ pub mod prelude {
     #[cfg(feature = "desktop")]
     pub use crate::desktop::{
         DesktopConfig, DesktopExitReason, DesktopImageError, DesktopPointerError, DesktopRunError,
-        DesktopRunReport,
+        DesktopRunReport, DesktopThreeDError,
     };
     pub use crate::events::{EventReader, EventSendError, EventWriter, WorldEvent};
     pub use crate::headless::{
@@ -125,6 +130,10 @@ pub mod prelude {
         ScreenVisualError,
     };
     pub use crate::system::{Stage, SystemRunFailure, SystemSetupError};
+    pub use crate::three_d::{
+        CuboidVisual3d, CuboidVisualError, ResolvedCuboid3d, ThreeDExtractionError,
+        ThreeDLimitResource, ThreeDRenderLimits, ThreeDSnapshot, View3d, View3dError,
+    };
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;
     pub use crate::visual::{

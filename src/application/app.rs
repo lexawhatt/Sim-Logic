@@ -27,6 +27,7 @@ use crate::{
         Stage, StageFactories, SupportedSystemParamTuple, register_system_application_resources,
         register_system_events,
     },
+    three_d::{CuboidVisual3d, ThreeDRenderLimits},
     time::TimeConfig,
     transition::replace_world_on_press,
     visual::{ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d},
@@ -157,6 +158,15 @@ impl AppConfig {
     /// Replaces renderer-independent extraction and presentation limits.
     pub fn set_render_limits(&mut self, limits: RenderLimits) -> &mut Self {
         self.render = limits;
+        self
+    }
+
+    /// Replaces opt-in cuboid, triangle, and physical depth-target limits.
+    ///
+    /// All other rendering limits are preserved. Final composition still
+    /// requires a target pass and color texture space in FrameLimits.
+    pub fn set_three_d_render_limits(&mut self, limits: ThreeDRenderLimits) -> &mut Self {
+        self.render = self.render.with_three_d_render_limits(limits);
         self
     }
 
@@ -352,6 +362,9 @@ impl<A: Action> Application<A> {
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
             .approve::<ScreenImageVisual>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
+        components
+            .approve::<CuboidVisual3d>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
             .approve::<ActiveCamera2d>()

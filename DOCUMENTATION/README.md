@@ -18,10 +18,16 @@ future API. The project is experimental and public APIs can still change.
   in place while the World camera moves.
 - [Screen images](Screen-Images.md): register bounded immutable pixels, crop
   and tint their placements, and share assets across World replacement.
+- [Geometric 3D](ThreeD.md): draw bounded solid cuboids with real depth,
+  switch views, and keep screen overlays above the 3D scene.
 - [Pointer input](Pointer-Input.md): bind mouse buttons, preserve click-time
   coordinates, and place objects using an explicit camera.
 - [Iron Maze](Iron-Maze.md): play a small 2.5D shooter and follow its fixed
   game state, screen-rectangle rendering, and level restart.
+- [Piano roll](Piano-Roll.md): edit a melody, synthesize it, and switch between
+  a 2D score and a 3D piano without restarting its audio clock.
+- [Audio output](Audio-Output.md): optional single-source device output,
+  buffer policy, guard lifetime, and diagnostics.
 - [Code layout](Code-Layout.md): find application, ECS, rendering, and private
   runner code when reading or changing the implementation.
 - [Repository README](../README.md): individual helpers and their limits.
@@ -37,7 +43,7 @@ cargo doc --no-deps --open
 
 | Project | Responsibility |
 | --- | --- |
-| Sim;Logic | Application state, input, update order, World changes, and preparing visual state. |
+| Sim;Logic | Application state, input, update order, World changes, preparing visual state, and optional output integration. |
 | Sim;Engine | Rendering, cameras, the GPU, and renderer recovery. |
 | Sim;X | Scientific models, units, formulas, and rules specific to its applications. |
 
@@ -60,3 +66,7 @@ built-in hit testing.
 Headless tests need neither a window nor a GPU. The desktop examples currently
 target the Linux/Vulkan path; this is not a claim that every platform and
 renderer configuration has been tested.
+
+The optional `audio` feature is not enabled by default. Its device guard does
+not add staged audio Commands or automatic World voice ownership. Cuboid 3D
+rendering has independent opt-in limits and no general model importer.

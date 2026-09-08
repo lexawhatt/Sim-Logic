@@ -25,6 +25,10 @@ Commands, so the structural changes appear at the fixed stage barrier.
 not need a button binding, and the position persists across frames and ticks.
 
 An `ActionEdge` returned by `pressed` or `released` has its own `pointer()`.
+`FrameInput::edges()` exposes presses and releases together in physical event
+order. Use it for dragging: a complete press/move/release can fit inside one
+frame, and the release edge's pointer remains the endpoint even if later
+motion changes the frame's latest pointer.
 For a mouse edge, this is the last sample accepted before that particular
 button event. Use the edge's sample for clicking: the pointer may move again
 before a System reads the frame. Keyboard edges and synthetic releases caused

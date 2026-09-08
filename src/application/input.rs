@@ -572,6 +572,15 @@ impl<A: Action> FrameInput<'_, A> {
         self.state.pressed(action)
     }
 
+    /// Iterates over all action edges in physical event order.
+    ///
+    /// Use this for gestures whose presses and releases can both arrive in
+    /// one display frame. Each mouse edge keeps its own event-time pointer;
+    /// the latest pointer is not necessarily the release endpoint.
+    pub fn edges(&self) -> impl Iterator<Item = ActionEdge<A>> + '_ {
+        self.state.edges.iter().copied()
+    }
+
     /// Iterates over every release occurrence for `action` in event order.
     pub fn released(&self, action: A) -> impl Iterator<Item = ActionEdge<A>> + '_ {
         self.state.released(action)

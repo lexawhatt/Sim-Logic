@@ -21,6 +21,7 @@ use crate::{
     identity::ManagedEntity,
     render::RenderLimits,
     screen::{ScreenImageVisual, ScreenRectangleVisual},
+    three_d::{CuboidSource, CuboidVisual3d, View3d},
     visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, WorldBackground,
     },
@@ -71,6 +72,10 @@ type ScreenImageExtractionQuery = QueryState<
     (Entity, &'static ManagedEntity, &'static ScreenImageVisual),
     (Allow<Disabled>, Without<Disabled>),
 >;
+type CuboidExtractionQuery = QueryState<
+    (Entity, &'static ManagedEntity, &'static CuboidVisual3d),
+    (Allow<Disabled>, Without<Disabled>),
+>;
 type TransformInterpolationQuery =
     QueryState<(Entity, &'static ManagedEntity, &'static mut Transform2d), Allow<Disabled>>;
 type CameraSnapQuery = QueryState<&'static mut ActiveCamera2d, Allow<Disabled>>;
@@ -98,6 +103,7 @@ pub(super) struct ExtractionQueries {
     lines: LineExtractionQuery,
     screen_rectangles: ScreenRectangleExtractionQuery,
     screen_images: ScreenImageExtractionQuery,
+    cuboids: CuboidExtractionQuery,
 }
 
 impl ExtractionQueries {
@@ -109,6 +115,7 @@ impl ExtractionQueries {
             lines: world.query_filtered(),
             screen_rectangles: world.query_filtered(),
             screen_images: world.query_filtered(),
+            cuboids: world.query_filtered(),
         }
     }
 }
@@ -269,5 +276,12 @@ pub(super) fn stage_runtime_world(
         rectangles,
         lines,
         screen_rectangles.chain(screen_images),
-    )
+    )?;
+    let view = runtime.world.get_resource::<View3d>().copied();
+    let cuboids = runtime
+        .extraction_queries
+        .cuboids
+        .iter(&runtime.world)
+        .map(|(raw, entity, visual)| CuboidSource::new(entity.handle(raw), visual));
+    extraction.stage_three_d(runtime.generation, limits.three_d(), view, cuboids)
 }

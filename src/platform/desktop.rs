@@ -7,16 +7,19 @@
 mod images;
 #[path = "desktop/pointer.rs"]
 mod pointer;
+#[path = "desktop/three_d.rs"]
+mod three_d;
 
 pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
+pub use three_d::DesktopThreeDError;
 
 use std::{error::Error, fmt, sync::Arc, time::Instant};
 
 use sim_engine::{
-    FrameBudget, FrameComposerError, FramePassOptions, FrameReport, RenderStatus,
-    RendererConfigurationError, RendererFrameError, RendererInitError, RendererPresentMode,
-    RendererSurfaceStatus, WgpuRenderer, WgpuRendererOptions,
+    FrameBudget, FrameComposerError, FramePassOptions, FrameReport, Mesh3dRenderReport,
+    RenderStatus, RendererConfigurationError, RendererFrameError, RendererInitError,
+    RendererPresentMode, RendererSurfaceStatus, WgpuRenderer, WgpuRendererOptions,
 };
 use winit::{
     application::ApplicationHandler,
@@ -40,10 +43,12 @@ use crate::{
         SUPPORTED_PHYSICAL_KEY_COUNT, physical_key_index,
     },
     render::FrameLimits,
+    three_d::ThreeDRenderLimits,
 };
 
 use images::{DesktopImages, ScreenPresentationError};
 use pointer::DesktopPointerGeometry;
+use three_d::DesktopThreeD;
 
 const DEFAULT_TITLE: &str = "Sim;Logic";
 const DEFAULT_WIDTH: f64 = 1_280.0;
@@ -177,6 +182,7 @@ pub struct DesktopRunReport {
     exit_reason: DesktopExitReason,
     last_logic_frame: Option<LogicFrameReport>,
     last_render_frame: Option<FrameReport>,
+    last_three_d_frame: Option<Mesh3dRenderReport>,
 }
 
 impl DesktopRunReport {
@@ -219,6 +225,15 @@ impl DesktopRunReport {
     /// surface skip when that was the most recent attempt.
     pub const fn last_render_frame(&self) -> Option<FrameReport> {
         self.last_render_frame
+    }
+
+    /// Returns the latest frame's separate successful 3D depth-prepass report.
+    ///
+    /// This GPU work is outside FrameReport's composition budget and timings.
+    /// It may have been submitted even if the later surface frame was skipped.
+    /// A frame without an enabled 3D view resets this value to None.
+    pub const fn last_three_d_frame(&self) -> Option<Mesh3dRenderReport> {
+        self.last_three_d_frame
     }
 
     fn record_application_exit(&mut self, report: LogicFrameReport) {
@@ -289,6 +304,15 @@ pub enum DesktopRunError {
         /// Canonical logical outcome that preceded image preparation.
         logic_frame: Box<LogicFrameReport>,
     },
+    /// Preparing or submitting the separate 3D depth prepass failed after the
+    /// logical frame completed. Retained resources can remain warmed; no
+    /// partial surface frame is presented and canonical state is not rolled back.
+    ThreeDPreparation {
+        /// Concrete bounded preparation or whole-scene renderer error.
+        error: DesktopThreeDError,
+        /// Canonical logical outcome preceding the failed 3D preparation.
+        logic_frame: Box<LogicFrameReport>,
+    },
     /// The one permitted recovery attempt for a lost surface failed after the
     /// logical frame had already completed.
     Recovery {
@@ -341,6 +365,9 @@ impl fmt::Display for DesktopRunError {
             Self::ImagePreparation { error, .. } => {
                 write!(formatter, "desktop image preparation failed: {error}")
             }
+            Self::ThreeDPreparation { error, .. } => {
+                write!(formatter, "desktop 3D preparation failed: {error}")
+            }
             Self::Recovery { error, .. } => write!(formatter, "renderer recovery failed: {error}"),
         }
     }
@@ -360,6 +387,7 @@ impl Error for DesktopRunError {
             Self::BeginFrame(error) => Some(error),
             Self::Presentation { error, .. } => Some(error),
             Self::ImagePreparation { error, .. } => Some(error),
+            Self::ThreeDPreparation { error, .. } => Some(error),
             Self::Recovery { error, .. } => Some(error),
             Self::InputEventLimitExceeded { .. }
             | Self::InputBufferAllocationFailed
@@ -378,11 +406,18 @@ pub(crate) fn run<A: Action>(
 ) -> Result<DesktopRunReport, DesktopRunError> {
     let input_event_limit = application.config.input_event_limit();
     let frame_budget = frame_budget(application.config.render().frame_limits());
+    let three_d_limits = application.config.render().three_d();
     let runner = application
         .build_headless(initial)
         .map_err(DesktopRunError::Runner)?;
     let event_loop = EventLoop::new().map_err(DesktopRunError::EventLoop)?;
-    let mut desktop = DesktopHost::new(runner, config, input_event_limit, frame_budget);
+    let mut desktop = DesktopHost::new(
+        runner,
+        config,
+        input_event_limit,
+        frame_budget,
+        three_d_limits,
+    );
     event_loop
         .run_app(&mut desktop)
         .map_err(DesktopRunError::EventLoop)?;
@@ -400,6 +435,8 @@ struct DesktopHost<A: Action> {
     window: Option<Arc<Window>>,
     renderer: Option<WgpuRenderer>,
     images: DesktopImages,
+    three_d: DesktopThreeD,
+    three_d_limits: ThreeDRenderLimits,
     pending_events: Vec<InputEvent>,
     input_failure: Option<InputBufferFailure>,
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
@@ -417,6 +454,7 @@ impl<A: Action> DesktopHost<A> {
         config: DesktopConfig,
         input_event_limit: usize,
         frame_budget: FrameBudget,
+        three_d_limits: ThreeDRenderLimits,
     ) -> Self {
         Self {
             runner,
@@ -426,6 +464,8 @@ impl<A: Action> DesktopHost<A> {
             window: None,
             renderer: None,
             images: DesktopImages::new(),
+            three_d: DesktopThreeD::new(),
+            three_d_limits,
             pending_events: Vec::new(),
             input_failure: None,
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
@@ -625,7 +665,30 @@ impl<A: Action> DesktopHost<A> {
             self.stop(event_loop, DesktopRunError::RuntimeInvariant);
             return;
         };
-        let presentation = if extracted.resolved_screen_images().is_empty() {
+        self.report.last_three_d_frame = None;
+        let presentation = if let Some(snapshot) = extracted.three_d() {
+            (|| {
+                self.images.preflight_three_d(
+                    extracted,
+                    self.runner.image_assets(),
+                    self.frame_budget,
+                    three_d::color_target_bytes(renderer)?,
+                )?;
+                self.report.last_three_d_frame = Some(self.three_d.prepare(
+                    renderer,
+                    snapshot,
+                    self.three_d_limits,
+                )?);
+                images::present(
+                    renderer,
+                    extracted,
+                    self.runner.image_assets(),
+                    &mut self.images,
+                    self.frame_budget,
+                    self.three_d.color_target(),
+                )
+            })()
+        } else if extracted.resolved_screen_images().is_empty() {
             present_extracted(renderer, extracted, self.frame_budget)
                 .map_err(ScreenPresentationError::Composition)
         } else {
@@ -635,6 +698,7 @@ impl<A: Action> DesktopHost<A> {
                 self.runner.image_assets(),
                 &mut self.images,
                 self.frame_budget,
+                None,
             )
         };
         let presentation = match presentation {
@@ -644,6 +708,16 @@ impl<A: Action> DesktopHost<A> {
                 self.stop(
                     event_loop,
                     DesktopRunError::ImagePreparation {
+                        error,
+                        logic_frame: Box::new(report),
+                    },
+                );
+                return;
+            }
+            Err(ScreenPresentationError::ThreeD(error)) => {
+                self.stop(
+                    event_loop,
+                    DesktopRunError::ThreeDPreparation {
                         error,
                         logic_frame: Box::new(report),
                     },
@@ -692,6 +766,7 @@ impl<A: Action> DesktopHost<A> {
                     match pollster::block_on(renderer.recover_device_and_surface()) {
                         Ok(()) => {
                             self.images.clear();
+                            self.three_d.clear();
                             self.report.device_recoveries =
                                 self.report.device_recoveries.saturating_add(1);
                             if reset_wall_clock_on_success {
@@ -809,6 +884,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         self.last_frame = Instant::now();
         self.window = Some(window);
         self.images.clear();
+        self.three_d.clear();
         self.renderer = Some(renderer);
     }
 
@@ -1229,6 +1305,7 @@ mod tests {
             DesktopConfig::default(),
             32,
             frame_budget(FrameLimits::default()),
+            ThreeDRenderLimits::default(),
         );
         let new_keys = [
             PhysicalKeyCode::ArrowLeft,

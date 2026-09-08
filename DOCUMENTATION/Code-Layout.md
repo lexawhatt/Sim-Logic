@@ -9,6 +9,7 @@ available to users as `sim_logic::input`.
 | --- | --- |
 | [application](../src/application/) | Application setup, input, time, resources, transitions, and the shared runner. |
 | [assets](../src/assets/) | Immutable CPU image registrations, opaque handles, and storage limits. |
+| [audio](../src/audio/) | Optional single-source device output, buffer policy, and diagnostics. |
 | [ecs](../src/ecs/) | Entity identity, queries, System registration, World construction, events, and Commands. |
 | [logic](../src/logic/) | Generic overlap geometry and opt-in movement helpers. |
 | [rendering](../src/rendering/) | Visual components, CPU extraction, and render limits. |
@@ -64,3 +65,11 @@ point. Its public integration tests reuse that setup headlessly.
 Keep application-specific rules with the application. A reusable runtime
 helper belongs in the library when it removes repeated infrastructure or
 enforces a clear invariant, with its behavior covered through the public API.
+
+The [piano roll](Piano-Roll.md) keeps notes, synthesis, editing and its 3D
+instrument in `examples/piano_roll`. `music.rs` owns sample-clock state;
+`control.rs` connects it to the editor through a bounded queue. `view.rs` and
+`model3d.rs` read that shared state. Only `main.rs` owns a real audio device.
+The generic cuboid bridge lives in `rendering/three_d`; its retained GPU
+resources live in `platform/desktop/three_d.rs`. Original bitmap glyphs shared
+by the two larger examples live in `examples/support/bitmap_font.rs`.

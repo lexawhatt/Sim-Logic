@@ -1,5 +1,6 @@
 //! Renderer-independent limits for visual extraction and presentation.
 
+use crate::three_d::ThreeDRenderLimits;
 use bevy_ecs::{
     prelude::{Res, Resource},
     system::SystemParam,
@@ -168,6 +169,7 @@ pub struct RenderLimits {
     world_scene_budget: SceneBudget,
     screen_scene_budget: SceneBudget,
     frame_limits: FrameLimits,
+    three_d: ThreeDRenderLimits,
 }
 
 impl RenderLimits {
@@ -191,6 +193,7 @@ impl RenderLimits {
             world_scene_budget,
             screen_scene_budget: DEFAULT_SCREEN_SCENE_BUDGET,
             frame_limits,
+            three_d: ThreeDRenderLimits::new(0, 0, 0),
         }
     }
 
@@ -220,6 +223,20 @@ impl RenderLimits {
     /// Returns the enabled screen-image count limit (zero by default).
     pub const fn max_screen_images(self) -> usize {
         self.max_screen_images
+    }
+
+    /// Returns opt-in object, triangle, and physical-target caps for real 3D.
+    pub const fn three_d(self) -> ThreeDRenderLimits {
+        self.three_d
+    }
+
+    /// Replaces only the independent 3D prepass limits.
+    ///
+    /// Final target composition also needs a pass and color texture allowance
+    /// in FrameLimits. The default zero limits do not enable 3D rendering.
+    pub const fn with_three_d_render_limits(mut self, limits: ThreeDRenderLimits) -> Self {
+        self.three_d = limits;
+        self
     }
 
     /// Enables a bounded number of screen images without changing other limits.

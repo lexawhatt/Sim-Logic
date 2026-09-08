@@ -14,6 +14,20 @@ State remains explicit Rust data, and behavior remains explicit Rust systems.
 Start with the [documentation](DOCUMENTATION/README.md) for a runnable
 headless example and a plain-language explanation of the runtime.
 
+## Play the piano
+
+Draw a short melody in a 2D piano roll, play it with synthesized sound, and
+switch to a depth-tested 3D upright piano without restarting the music:
+
+```bash
+cargo run --release --features audio --example piano_roll
+```
+
+Left click adds/selects notes, dragging changes their length, and right click
+removes them. Space plays/pauses; Enter switches 2D/3D. Click the bottom keys
+or hold A/S/D/W to play C/D/E/F. The [piano guide](DOCUMENTATION/Piano-Roll.md)
+explains all controls, silent mode, timing, and the current limits.
+
 ## Play Iron Maze
 
 Iron Maze is a small original 2.5D shooter built from ordinary Sim;Logic
@@ -69,12 +83,19 @@ The first experimental slice can:
   layout that keeps updating while simulation is paused;
 - register bounded immutable RGBA8 assets and draw screen images with source
   regions, tint, filtering, and shared rectangle/image ordering;
+- extract opt-in colored cuboids and a current-value 3D view, with retained
+  desktop geometry, a bounded depth target, and screen overlays;
+- optionally send one application-owned mono PCM source to an audio device,
+  with explicit buffer policy, lifetime and diagnostics;
 - commit A-to-B World replacement and extract B in the same logical frame.
 
 This is not a finished general-purpose engine. Generic transition payloads,
 asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit,
-managed text and 3D resources, audio, and parallel schedules are deliberately
-not public yet.
+managed text, arbitrary 3D assets, a World-scoped audio service, and parallel
+schedules are deliberately not public yet. The [audio output](DOCUMENTATION/Audio-Output.md)
+adapter is optional, immediate and independent of World transactions; it is
+not a full sound engine. The [3D bridge](DOCUMENTATION/ThreeD.md) currently
+supports cuboids, not arbitrary meshes, lighting or materials.
 
 Try the image path with `cargo run --release --example image_board`.
 WASD/arrows move an image, Space changes its source region, Enter opens an

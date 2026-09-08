@@ -5,6 +5,10 @@ use crate::{
     identity::{LogicEntity, WorldGeneration},
     render::RenderLimits,
     screen::{ImageVisualError, ScreenVisualError},
+    three_d::{
+        CuboidSource, ResolvedCuboid3d, ThreeDExtractionBuffer, ThreeDExtractionError,
+        ThreeDRenderLimits, ThreeDSnapshot, View3d,
+    },
     visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, VisualValueError,
         line_stroke_style,
@@ -203,6 +207,7 @@ struct ExtractionBuffer {
     )]
     world_scene: Scene,
     screen: ScreenExtractionBuffer,
+    three_d: ThreeDExtractionBuffer,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -277,6 +282,21 @@ impl ExtractedFrame {
         self.storage.screen.images()
     }
 
+    /// Returns the enabled 3D view and cuboids, or None when 3D is suppressed.
+    ///
+    /// Desktop composition places this opaque depth target above the 2D world
+    /// and below all screen draws. The snapshot contains no GPU resources.
+    pub fn three_d(&self) -> Option<ThreeDSnapshot<'_>> {
+        self.storage.three_d.snapshot()
+    }
+
+    /// Returns current visible cuboids in stable managed-identity order.
+    ///
+    /// Missing or disabled View3d resources produce an empty slice.
+    pub fn resolved_cuboids(&self) -> &[ResolvedCuboid3d] {
+        self.storage.three_d.resolved()
+    }
+
     /// Returns the exact screen composition after the world scene.
     ///
     /// Contiguous rectangle runs and individual images share layer, depth,
@@ -323,6 +343,7 @@ impl ExtractionBuffer {
             resolved_lines: Vec::new(),
             world_scene,
             screen: ScreenExtractionBuffer::new(limits)?,
+            three_d: ThreeDExtractionBuffer::new(),
         })
     }
 }
@@ -409,6 +430,27 @@ impl ExtractionBuffers {
         self.stage(parameters, cameras, circles, rectangles, lines, [])
     }
 
+    pub(crate) fn stage_three_d(
+        &mut self,
+        generation: WorldGeneration,
+        limits: ThreeDRenderLimits,
+        view: Option<View3d>,
+        sources: impl IntoIterator<Item = CuboidSource>,
+    ) -> Result<(), ExtractionError> {
+        let Some(metadata) = self.staged.take() else {
+            return Err(ExtractionError::MissingStagedFrame);
+        };
+        let Some(spare) = self.spare.as_mut() else {
+            return Err(ExtractionError::MissingStagedFrame);
+        };
+        spare
+            .three_d
+            .extract(generation, limits, view, sources)
+            .map_err(ExtractionError::ThreeD)?;
+        self.staged = Some(metadata);
+        Ok(())
+    }
+
     /// Publishes the complete staged buffer and recycles the previous one.
     pub(crate) fn publish(&mut self) -> Option<WorldGeneration> {
         let metadata = self.staged.take()?;
@@ -431,6 +473,10 @@ impl ExtractionBuffers {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ExtractionError {
+    /// A private staged snapshot was unavailable for completing 3D extraction.
+    MissingStagedFrame,
+    /// Independent bounded 3D snapshot preparation failed.
+    ThreeD(ThreeDExtractionError),
     /// The active World did not contain a camera marked for extraction.
     MissingActiveCamera,
     /// The active World contained more than one marked camera.
@@ -529,6 +575,8 @@ pub enum ExtractionError {
 impl fmt::Display for ExtractionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingStagedFrame => formatter.write_str("no staged CPU frame is available"),
+            Self::ThreeD(error) => write!(formatter, "3D extraction failed: {error}"),
             Self::MissingActiveCamera => formatter.write_str("active World has no 2D camera"),
             Self::MultipleActiveCameras => {
                 formatter.write_str("active World has more than one 2D camera")
@@ -605,6 +653,7 @@ impl fmt::Display for ExtractionError {
 impl Error for ExtractionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::ThreeD(error) => Some(error),
             Self::InvalidVisual { error, .. } => Some(error),
             Self::Scene(error) => Some(error),
             Self::ScreenScene(error) => Some(error),
@@ -752,6 +801,7 @@ fn extract_frame_into(
     storage.resolved_lines.clear();
     storage.world_scene.clear();
     storage.screen.clear();
+    storage.three_d.clear();
 
     if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
         return Err(ExtractionError::InvalidInterpolationAlpha { alpha });

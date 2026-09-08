@@ -3,10 +3,10 @@
 use std::{error::Error, fmt, mem::size_of};
 
 use sim_engine::{
-    Camera2d, FrameBudget, FrameBudgetResource, FrameComposerError, FramePassOptions, FrameReport,
-    Image2d, ImageBudget, ImageError, ImageSampling, ImageTexelRect, LogicalScreenPosition,
-    LogicalScreenVector, LogicalViewport, Rect, RendererFrameError, SceneStatistics, Vec2,
-    WgpuRenderer,
+    BlendMode, Camera2d, FrameBudget, FrameBudgetResource, FrameComposerError, FramePassOptions,
+    FrameReport, Image2d, ImageBudget, ImageError, ImageSampling, ImageTexelRect,
+    LogicalScreenPosition, LogicalScreenVector, LogicalViewport, Rect, RenderTarget2d,
+    RendererFrameError, SceneStatistics, Vec2, WgpuRenderer,
 };
 
 use crate::{
@@ -104,6 +104,13 @@ impl Error for DesktopImageError {
 pub(super) enum ScreenPresentationError {
     Images(DesktopImageError),
     Composition(FrameComposerError),
+    ThreeD(super::three_d::DesktopThreeDError),
+}
+
+impl From<super::three_d::DesktopThreeDError> for ScreenPresentationError {
+    fn from(error: super::three_d::DesktopThreeDError) -> Self {
+        Self::ThreeD(error)
+    }
 }
 
 impl From<DesktopImageError> for ScreenPresentationError {
@@ -185,6 +192,24 @@ impl DesktopImages {
     pub(super) fn clear(&mut self) {
         self.resources.clear();
         self.referenced.clear();
+    }
+
+    pub(super) fn preflight_three_d(
+        &mut self,
+        extracted: &ExtractedFrame,
+        registry: &ImageAssetRegistry,
+        budget: FrameBudget,
+        target_bytes: usize,
+    ) -> Result<(), ScreenPresentationError> {
+        // The public surface format provides exact color-target bytes before
+        // allocation. Engine still validates its private uniform/tessellation work.
+        preflight_with_target(
+            extracted,
+            registry,
+            &mut self.referenced,
+            budget,
+            Some(target_bytes),
+        )
     }
 
     fn prepare(
@@ -313,6 +338,16 @@ fn preflight(
     referenced: &mut Vec<ImageAssetId>,
     budget: FrameBudget,
 ) -> Result<(), ScreenPresentationError> {
+    preflight_with_target(extracted, registry, referenced, budget, None)
+}
+
+fn preflight_with_target(
+    extracted: &ExtractedFrame,
+    registry: &ImageAssetRegistry,
+    referenced: &mut Vec<ImageAssetId>,
+    budget: FrameBudget,
+    target_bytes: Option<usize>,
+) -> Result<(), ScreenPresentationError> {
     referenced.clear();
     if referenced.capacity() < registry.len() {
         referenced.try_reserve_exact(registry.len()).map_err(|_| {
@@ -323,6 +358,10 @@ fn preflight(
     }
     let mut work = FrameWork::default();
     work.scene(extracted.world_scene().statistics());
+    if let Some(bytes) = target_bytes {
+        work.image();
+        work.texture_bytes = bytes;
+    }
     for draw in extracted.screen_draws() {
         match *draw {
             ScreenDraw::Rectangles { run } => {
@@ -380,8 +419,18 @@ pub(super) fn present(
     registry: &ImageAssetRegistry,
     images: &mut DesktopImages,
     budget: FrameBudget,
+    target: Option<&RenderTarget2d>,
 ) -> Result<FrameReport, ScreenPresentationError> {
-    preflight(extracted, registry, &mut images.referenced, budget)?;
+    match target {
+        Some(target) => preflight_with_target(
+            extracted,
+            registry,
+            &mut images.referenced,
+            budget,
+            Some(target.allocation_bytes()),
+        )?,
+        None => preflight(extracted, registry, &mut images.referenced, budget)?,
+    }
     let viewport = renderer
         .logical_viewport()
         .map_err(|_| FrameComposerError::Frame(RendererFrameError::InvalidViewport))?;
@@ -394,6 +443,9 @@ pub(super) fn present(
         extracted.camera(),
         FramePassOptions::new(0),
     )?;
+    if let Some(target) = target {
+        frame.draw_render_target(target, BlendMode::Replace, 1.0, FramePassOptions::new(0))?;
+    }
     for draw in extracted.screen_draws() {
         // FrameComposer keeps insertion order when the integer order is equal.
         // CPU layer/depth/entity sorting therefore survives interleaved types.
@@ -586,6 +638,48 @@ mod tests {
                     resource: FrameBudgetResource::TextureBytes,
                     limit: 15,
                     actual: 16
+                }
+            ))
+        ));
+        let three_d = FrameBudget::new(7, 100, 1000, 10000, 80, 100);
+        preflight_with_target(
+            extracted,
+            runner.image_assets(),
+            &mut referenced,
+            three_d,
+            Some(64),
+        )
+        .unwrap();
+        assert!(matches!(
+            preflight_with_target(
+                extracted,
+                runner.image_assets(),
+                &mut referenced,
+                enough,
+                Some(64)
+            ),
+            Err(ScreenPresentationError::Composition(
+                FrameComposerError::BudgetExceeded {
+                    resource: FrameBudgetResource::Passes,
+                    actual: 7,
+                    ..
+                }
+            ))
+        ));
+        let short_texture = FrameBudget::new(7, 100, 1000, 10000, 79, 100);
+        assert!(matches!(
+            preflight_with_target(
+                extracted,
+                runner.image_assets(),
+                &mut referenced,
+                short_texture,
+                Some(64)
+            ),
+            Err(ScreenPresentationError::Composition(
+                FrameComposerError::BudgetExceeded {
+                    resource: FrameBudgetResource::TextureBytes,
+                    actual: 80,
+                    ..
                 }
             ))
         ));
