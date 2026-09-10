@@ -88,7 +88,7 @@ impl<A: Action> DigitalAxis2d<A> {
     }
 }
 
-/// A portable physical keyboard key supported by the first vertical slice.
+/// A portable physical keyboard key supported by the runtime.
 ///
 /// Desktop adapters translate platform key codes into this enum before input
 /// reaches the headless runtime core.
@@ -117,9 +117,37 @@ pub enum PhysicalKeyCode {
     ArrowUp,
     /// The physical Escape key.
     Escape,
+    /// The physical P key.
+    KeyP,
+    /// The physical R key.
+    KeyR,
+    /// The physical N key.
+    KeyN,
+    /// The physical 1 key on the number row, not the numeric keypad.
+    Digit1,
+    /// The physical 2 key on the number row, not the numeric keypad.
+    Digit2,
+    /// The physical 3 key on the number row, not the numeric keypad.
+    Digit3,
+    /// The physical 4 key on the number row, not the numeric keypad.
+    Digit4,
+    /// The physical 5 key on the number row, not the numeric keypad.
+    Digit5,
+    /// The physical F3 function key.
+    F3,
+    /// The physical F4 function key.
+    F4,
+    /// The physical F5 function key.
+    F5,
+    /// The physical F6 function key.
+    F6,
+    /// The physical F8 function key.
+    F8,
+    /// The physical F9 function key.
+    F9,
 }
 
-pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 11] = [
+pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 25] = [
     PhysicalKeyCode::KeyW,
     PhysicalKeyCode::KeyA,
     PhysicalKeyCode::KeyS,
@@ -131,6 +159,20 @@ pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 11] = [
     PhysicalKeyCode::ArrowDown,
     PhysicalKeyCode::ArrowUp,
     PhysicalKeyCode::Escape,
+    PhysicalKeyCode::KeyP,
+    PhysicalKeyCode::KeyR,
+    PhysicalKeyCode::KeyN,
+    PhysicalKeyCode::Digit1,
+    PhysicalKeyCode::Digit2,
+    PhysicalKeyCode::Digit3,
+    PhysicalKeyCode::Digit4,
+    PhysicalKeyCode::Digit5,
+    PhysicalKeyCode::F3,
+    PhysicalKeyCode::F4,
+    PhysicalKeyCode::F5,
+    PhysicalKeyCode::F6,
+    PhysicalKeyCode::F8,
+    PhysicalKeyCode::F9,
 ];
 
 pub(crate) const SUPPORTED_PHYSICAL_KEY_COUNT: usize = ALL_PHYSICAL_KEYS.len();
@@ -1093,6 +1135,20 @@ pub(crate) const fn physical_key_index(key: PhysicalKeyCode) -> usize {
         PhysicalKeyCode::ArrowDown => 8,
         PhysicalKeyCode::ArrowUp => 9,
         PhysicalKeyCode::Escape => 10,
+        PhysicalKeyCode::KeyP => 11,
+        PhysicalKeyCode::KeyR => 12,
+        PhysicalKeyCode::KeyN => 13,
+        PhysicalKeyCode::Digit1 => 14,
+        PhysicalKeyCode::Digit2 => 15,
+        PhysicalKeyCode::Digit3 => 16,
+        PhysicalKeyCode::Digit4 => 17,
+        PhysicalKeyCode::Digit5 => 18,
+        PhysicalKeyCode::F3 => 19,
+        PhysicalKeyCode::F4 => 20,
+        PhysicalKeyCode::F5 => 21,
+        PhysicalKeyCode::F6 => 22,
+        PhysicalKeyCode::F8 => 23,
+        PhysicalKeyCode::F9 => 24,
     }
 }
 
@@ -1175,7 +1231,7 @@ mod tests {
 
     #[test]
     fn physical_key_catalog_is_unique_and_round_trips_every_index() {
-        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 11);
+        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 25);
         let mut unique = HashSet::new();
 
         for (index, key) in ALL_PHYSICAL_KEYS.into_iter().enumerate() {
@@ -1814,15 +1870,9 @@ mod tests {
     }
 
     #[test]
-    fn every_new_key_suppresses_repeated_physical_states() {
+    fn every_supported_key_suppresses_repeated_physical_states() {
         let (application, generation) = identity();
-        let new_keys = [
-            PhysicalKeyCode::ArrowLeft,
-            PhysicalKeyCode::ArrowRight,
-            PhysicalKeyCode::ArrowDown,
-            PhysicalKeyCode::ArrowUp,
-            PhysicalKeyCode::Escape,
-        ];
+        let new_keys = ALL_PHYSICAL_KEYS;
         let mut bindings = ActionBindings::new();
         for key in new_keys {
             assert!(bindings.bind(key, TestAction::Move).is_ok());

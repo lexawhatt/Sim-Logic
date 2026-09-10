@@ -79,6 +79,11 @@ name = "piano_roll"
 path = "examples/piano_roll/main.rs"
 required-features = ["desktop", "audio"]
 
+[[example]]
+name = "territory_wars"
+path = "examples/territory_wars/main.rs"
+required-features = ["desktop"]
+
 [[bench]]
 name = "headless_runtime"
 harness = false
@@ -91,5 +96,10 @@ test = false
 
 [[bench]]
 name = "piano_roll"
+harness = false
+test = false
+
+[[bench]]
+name = "territory_wars"
 harness = false
 test = false

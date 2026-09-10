@@ -14,6 +14,20 @@ State remains explicit Rust data, and behavior remains explicit Rust systems.
 Start with the [documentation](DOCUMENTATION/README.md) for a runnable
 headless example and a plain-language explanation of the runtime.
 
+## Play Frontier
+
+Conquer a seeded island against six bots in an offline territory game:
+
+```bash
+cargo run --release --example territory_wars
+```
+
+Click land to start, then click unclaimed land or a bordering rival to send
+troops. Adjust the attack percentage with the slider; Space expands, P pauses,
+and R restarts. F3 opens the mechanics/AI inspector. F4 arms the optional cheats;
+using them marks the run as assisted. The [Frontier guide](DOCUMENTATION/examples/Territory-Wars.md)
+explains the controls and the separate income, combat, and bot modules.
+
 ## Play the piano
 
 Draw a short melody in a 2D piano roll, play it with synthesized sound, and
@@ -55,7 +69,8 @@ The first experimental slice can:
 - let systems return `Result` and stop their stage with a reported error;
 - pass bounded typed events between ordered systems in one stage invocation;
 - keep explicitly registered typed Application Resources across World replacement;
-- map W/A/S/D, arrows, Space, Enter, and Escape to application-defined actions;
+- map W/A/S/D, P/R/N, digits 1-5, arrows, Space, Enter, Escape, and
+  F3/F4/F5/F6/F8/F9 to application-defined actions;
 - map left, right, and middle mouse buttons to actions with click-time pointer
   samples and explicit screen-to-world coordinate conversion;
 - find live same-shape overlaps among typed circular colliders and among

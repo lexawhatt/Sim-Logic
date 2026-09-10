@@ -1111,6 +1111,20 @@ fn map_key(key: PhysicalKey) -> Option<PhysicalKeyCode> {
         PhysicalKey::Code(KeyCode::ArrowDown) => Some(PhysicalKeyCode::ArrowDown),
         PhysicalKey::Code(KeyCode::ArrowUp) => Some(PhysicalKeyCode::ArrowUp),
         PhysicalKey::Code(KeyCode::Escape) => Some(PhysicalKeyCode::Escape),
+        PhysicalKey::Code(KeyCode::KeyP) => Some(PhysicalKeyCode::KeyP),
+        PhysicalKey::Code(KeyCode::KeyR) => Some(PhysicalKeyCode::KeyR),
+        PhysicalKey::Code(KeyCode::KeyN) => Some(PhysicalKeyCode::KeyN),
+        PhysicalKey::Code(KeyCode::Digit1) => Some(PhysicalKeyCode::Digit1),
+        PhysicalKey::Code(KeyCode::Digit2) => Some(PhysicalKeyCode::Digit2),
+        PhysicalKey::Code(KeyCode::Digit3) => Some(PhysicalKeyCode::Digit3),
+        PhysicalKey::Code(KeyCode::Digit4) => Some(PhysicalKeyCode::Digit4),
+        PhysicalKey::Code(KeyCode::Digit5) => Some(PhysicalKeyCode::Digit5),
+        PhysicalKey::Code(KeyCode::F3) => Some(PhysicalKeyCode::F3),
+        PhysicalKey::Code(KeyCode::F4) => Some(PhysicalKeyCode::F4),
+        PhysicalKey::Code(KeyCode::F5) => Some(PhysicalKeyCode::F5),
+        PhysicalKey::Code(KeyCode::F6) => Some(PhysicalKeyCode::F6),
+        PhysicalKey::Code(KeyCode::F8) => Some(PhysicalKeyCode::F8),
+        PhysicalKey::Code(KeyCode::F9) => Some(PhysicalKeyCode::F9),
         PhysicalKey::Code(_) | PhysicalKey::Unidentified(_) => None,
     }
 }
@@ -1283,13 +1297,29 @@ mod tests {
             (KeyCode::ArrowDown, PhysicalKeyCode::ArrowDown),
             (KeyCode::ArrowUp, PhysicalKeyCode::ArrowUp),
             (KeyCode::Escape, PhysicalKeyCode::Escape),
+            (KeyCode::KeyP, PhysicalKeyCode::KeyP),
+            (KeyCode::KeyR, PhysicalKeyCode::KeyR),
+            (KeyCode::KeyN, PhysicalKeyCode::KeyN),
+            (KeyCode::Digit1, PhysicalKeyCode::Digit1),
+            (KeyCode::Digit2, PhysicalKeyCode::Digit2),
+            (KeyCode::Digit3, PhysicalKeyCode::Digit3),
+            (KeyCode::Digit4, PhysicalKeyCode::Digit4),
+            (KeyCode::Digit5, PhysicalKeyCode::Digit5),
+            (KeyCode::F3, PhysicalKeyCode::F3),
+            (KeyCode::F4, PhysicalKeyCode::F4),
+            (KeyCode::F5, PhysicalKeyCode::F5),
+            (KeyCode::F6, PhysicalKeyCode::F6),
+            (KeyCode::F8, PhysicalKeyCode::F8),
+            (KeyCode::F9, PhysicalKeyCode::F9),
         ];
 
+        assert_eq!(mappings.map(|(_, portable)| portable), ALL_PHYSICAL_KEYS);
         for (platform, portable) in mappings {
             assert_eq!(map_key(PhysicalKey::Code(platform)), Some(portable));
             assert_eq!(ALL_PHYSICAL_KEYS[physical_key_index(portable)], portable);
         }
         assert_eq!(map_key(PhysicalKey::Code(KeyCode::KeyQ)), None);
+        assert_eq!(map_key(PhysicalKey::Code(KeyCode::Numpad1)), None);
         assert_eq!(
             map_key(PhysicalKey::Unidentified(
                 winit::keyboard::NativeKeyCode::Unidentified
@@ -1299,23 +1329,18 @@ mod tests {
     }
 
     #[test]
-    fn focus_loss_releases_new_keys_once_in_catalog_order() -> Result<(), Box<dyn Error>> {
+    fn focus_loss_releases_all_supported_keys_once_in_catalog_order() -> Result<(), Box<dyn Error>>
+    {
         let mut host = DesktopHost::new(
             parity_runner()?,
             DesktopConfig::default(),
-            32,
+            ALL_PHYSICAL_KEYS.len() * 2,
             frame_budget(FrameLimits::default()),
             ThreeDRenderLimits::default(),
         );
-        let new_keys = [
-            PhysicalKeyCode::ArrowLeft,
-            PhysicalKeyCode::ArrowRight,
-            PhysicalKeyCode::ArrowDown,
-            PhysicalKeyCode::ArrowUp,
-            PhysicalKeyCode::Escape,
-        ];
+        let new_keys = ALL_PHYSICAL_KEYS;
 
-        for key in new_keys {
+        for key in new_keys.into_iter().rev() {
             host.collect_physical_key(key, ButtonState::Pressed);
         }
         host.release_all_keys();
@@ -1324,7 +1349,7 @@ mod tests {
         for (index, key) in new_keys.into_iter().enumerate() {
             assert_eq!(
                 host.pending_events[index],
-                InputEvent::key(key, ButtonState::Pressed)
+                InputEvent::key(new_keys[new_keys.len() - index - 1], ButtonState::Pressed)
             );
             assert_eq!(
                 host.pending_events[index + new_keys.len()],

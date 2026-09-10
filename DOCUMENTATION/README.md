@@ -30,6 +30,7 @@ a desktop example to testing the same application without a window.
 
 ## Example applications
 
+- [Frontier](examples/Territory-Wars.md): territory conquest, bots, separate game rules, and a mechanics inspector.
 - [Iron Maze](examples/Iron-Maze.md): a small 2.5D shooter.
 - [Piano roll](examples/Piano-Roll.md): editing, synthesized sound and a 2D/3D piano.
 
