@@ -3,9 +3,9 @@
 //! These presentation values require no window or GPU. They are sampled
 //! directly during extraction, without fixed-step interpolation. The desktop
 //! bridge uses one immutable unit-cube mesh and composes an opaque 3D target
-//! above the 2D world and below every screen overlay. Sim;Engine 0.2 requires
-//! filled triangles to remain wholly inside or wholly outside its frustum;
-//! applications should keep visible solid cuboids comfortably inside the view.
+//! above the 2D world and below every screen overlay. Sim;Engine 0.3 clips filled
+//! triangles against the view frustum within explicit topology budgets. The
+//! desktop bridge attributes object-specific failures to the source entity.
 
 mod extraction;
 mod view;

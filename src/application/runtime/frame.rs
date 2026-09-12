@@ -255,6 +255,8 @@ impl<A: Action> HeadlessRunner<A> {
                     self.config.render(),
                     &mut self.extraction,
                     &self.images,
+                    #[cfg(feature = "text")]
+                    &self.texts,
                 ) {
                     Ok(()) => {
                         report.extracted_generation = self.extraction.publish();

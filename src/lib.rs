@@ -48,6 +48,8 @@ pub mod resources;
 pub mod screen;
 #[path = "ecs/system.rs"]
 pub mod system;
+#[cfg(feature = "text")]
+pub mod text;
 #[path = "rendering/three_d/mod.rs"]
 pub mod three_d;
 #[path = "application/time.rs"]
@@ -68,6 +70,8 @@ pub use bevy_ecs;
 pub use component::{ComponentApprovalError, ComponentTuple, LifecycleHook};
 #[cfg(feature = "easter-eggs")]
 pub use easter_eggs::{CrabDrawError, draw_crab};
+#[cfg(feature = "text")]
+pub use extraction::ResolvedScreenText;
 pub use extraction::{
     ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
     ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,
@@ -86,6 +90,10 @@ pub type LogicResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>
 /// Commonly used Sim;Logic and ECS types.
 pub mod prelude {
     pub use crate::bevy_ecs;
+    #[cfg(all(feature = "desktop", feature = "text"))]
+    pub use crate::desktop::DesktopTextError;
+    #[cfg(feature = "desktop")]
+    pub use crate::desktop::FrameCacheBudget;
     pub use bevy_ecs::prelude::{Bundle, Component, Res, ResMut, Resource, With, Without};
     #[cfg(feature = "desktop")]
     pub use sim_engine::RendererPresentMode;
@@ -97,6 +105,8 @@ pub mod prelude {
 
     pub use crate::ComponentTuple;
     pub use crate::LogicResult;
+    #[cfg(feature = "text")]
+    pub use crate::ResolvedScreenText;
     pub use crate::app::{AppConfig, Application};
     pub use crate::assets::{ImageAsset, ImageAssetError, ImageAssetId, ImageAssetLimits};
     pub use crate::collision::{
@@ -135,6 +145,10 @@ pub mod prelude {
         ScreenVisualError,
     };
     pub use crate::system::{Stage, SystemRunFailure, SystemSetupError};
+    #[cfg(feature = "text")]
+    pub use crate::text::{
+        ScreenTextVisual, TextAlignment, TextError, TextFont, TextLimits, TextMetrics, TextSettings,
+    };
     pub use crate::three_d::{
         CuboidVisual3d, CuboidVisualError, ResolvedCuboid3d, ThreeDExtractionError,
         ThreeDLimitResource, ThreeDRenderLimits, ThreeDSnapshot, View3d, View3dError,

@@ -36,6 +36,8 @@ pub struct HeadlessRunner<A: Action> {
     events: EventRegistry,
     application_resources: ApplicationResourceRegistry,
     images: ImageAssetRegistry,
+    #[cfg(feature = "text")]
+    texts: crate::text::TextRegistry,
     factories: Vec<RegisteredWorldFactory>,
     startup_factories: StageFactories,
     fixed_factories: StageFactories,
@@ -70,6 +72,18 @@ impl<A: Action> HeadlessRunner<A> {
     /// separate recovery copies and GPU textures. It is not total process memory.
     pub fn image_pixel_bytes(&self) -> usize {
         self.images.pixel_bytes()
+    }
+
+    /// Returns setup-time font registrations, including fonts not drawn.
+    #[cfg(feature = "text")]
+    pub fn text_font_count(&self) -> usize {
+        self.texts.len()
+    }
+
+    /// Returns source font Vec capacity, excluding parser metadata and GPU caches.
+    #[cfg(feature = "text")]
+    pub fn text_font_bytes(&self) -> usize {
+        self.texts.font_bytes()
     }
 
     #[cfg(feature = "desktop")]

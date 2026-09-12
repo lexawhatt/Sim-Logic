@@ -17,15 +17,25 @@ use super::{ExtractionError, compare_visual_order};
 mod images;
 pub use images::ResolvedScreenImage;
 pub(crate) use images::ScreenImageSource;
+#[cfg(feature = "text")]
+#[path = "text.rs"]
+mod text;
+#[cfg(feature = "text")]
+pub use text::ResolvedScreenText;
+#[cfg(feature = "text")]
+pub(crate) use text::ScreenTextSource;
 #[path = "composition.rs"]
 mod composition;
 use composition::RectangleRun;
 pub use composition::ScreenDraw;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "text"), derive(Copy))]
 pub(crate) enum ScreenSource {
     Rectangle(ScreenRectangleSource),
     Image(ScreenImageSource),
+    #[cfg(feature = "text")]
+    Text(ScreenTextSource),
 }
 
 impl From<ScreenRectangleSource> for ScreenSource {
@@ -97,6 +107,8 @@ pub(super) struct ScreenExtractionBuffer {
     resolved: Vec<ResolvedScreenRectangle>,
     scene: ScreenScene,
     images: Vec<ResolvedScreenImage>,
+    #[cfg(feature = "text")]
+    texts: Vec<ResolvedScreenText>,
     draws: Vec<ScreenDraw>,
     runs: Vec<RectangleRun>,
 }
@@ -106,6 +118,8 @@ impl ScreenExtractionBuffer {
         Ok(Self {
             resolved: Vec::new(),
             images: Vec::new(),
+            #[cfg(feature = "text")]
+            texts: Vec::new(),
             draws: Vec::new(),
             runs: Vec::new(),
             scene: ScreenScene::with_budget(Color::TRANSPARENT, limits.screen_scene_budget())
@@ -117,6 +131,8 @@ impl ScreenExtractionBuffer {
         self.resolved.clear();
         self.scene.clear();
         self.images.clear();
+        #[cfg(feature = "text")]
+        self.texts.clear();
         self.draws.clear();
     }
 
@@ -127,11 +143,23 @@ impl ScreenExtractionBuffer {
     pub(super) fn images(&self) -> &[ResolvedScreenImage] {
         &self.images
     }
+    #[cfg(feature = "text")]
+    pub(super) fn texts(&self) -> &[ResolvedScreenText] {
+        &self.texts
+    }
+
+    fn has_non_rectangles(&self) -> bool {
+        #[cfg(feature = "text")]
+        if !self.texts.is_empty() {
+            return true;
+        }
+        !self.images.is_empty()
+    }
     pub(super) fn draws(&self) -> &[ScreenDraw] {
         &self.draws
     }
     pub(super) fn run_records(&self, run: usize) -> Option<&[ResolvedScreenRectangle]> {
-        if self.images.is_empty() {
+        if !self.has_non_rectangles() {
             return (run == 0 && !self.resolved.is_empty()).then_some(self.resolved.as_slice());
         }
         let run = self.runs.get(run)?;
@@ -140,7 +168,7 @@ impl ScreenExtractionBuffer {
 
     #[cfg(feature = "desktop")]
     pub(super) fn run_scene(&self, run: usize) -> Option<&ScreenScene> {
-        if self.images.is_empty() {
+        if !self.has_non_rectangles() {
             return (run == 0 && !self.resolved.is_empty()).then_some(&self.scene);
         }
         self.runs.get(run).map(|run| &run.scene)
@@ -158,6 +186,10 @@ impl ScreenExtractionBuffer {
         sources: impl IntoIterator<Item = ScreenSource>,
     ) -> Result<(), ExtractionError> {
         debug_assert_eq!(self.scene.budget(), Some(limits.screen_scene_budget()));
+        #[cfg(feature = "text")]
+        let mut text_bytes = 0usize;
+        #[cfg(feature = "text")]
+        let mut text_glyphs = 0usize;
         for source in sources {
             let source = match source {
                 ScreenSource::Rectangle(source) => source,
@@ -174,6 +206,46 @@ impl ScreenExtractionBuffer {
                             requested_bytes: size_of::<ResolvedScreenImage>(),
                         })?;
                     self.images.push(image);
+                    continue;
+                }
+                #[cfg(feature = "text")]
+                ScreenSource::Text(source) => {
+                    if self.texts.len() == limits.max_screen_texts() {
+                        return Err(ExtractionError::ScreenTextLimitExceeded {
+                            limit: limits.max_screen_texts(),
+                        });
+                    }
+                    let text = source.resolve(generation)?;
+                    text_bytes = text_bytes.checked_add(text.text().len()).ok_or(
+                        ExtractionError::ScreenTextBytesLimitExceeded {
+                            limit: limits.max_screen_text_bytes(),
+                            requested: usize::MAX,
+                        },
+                    )?;
+                    if text_bytes > limits.max_screen_text_bytes() {
+                        return Err(ExtractionError::ScreenTextBytesLimitExceeded {
+                            limit: limits.max_screen_text_bytes(),
+                            requested: text_bytes,
+                        });
+                    }
+                    text_glyphs = text_glyphs.checked_add(text.visual().glyph_count()).ok_or(
+                        ExtractionError::ScreenTextGlyphLimitExceeded {
+                            limit: limits.max_screen_text_glyphs(),
+                            requested: usize::MAX,
+                        },
+                    )?;
+                    if text_glyphs > limits.max_screen_text_glyphs() {
+                        return Err(ExtractionError::ScreenTextGlyphLimitExceeded {
+                            limit: limits.max_screen_text_glyphs(),
+                            requested: text_glyphs,
+                        });
+                    }
+                    self.texts
+                        .try_reserve(1)
+                        .map_err(|_| ExtractionError::AllocationFailed {
+                            requested_bytes: size_of::<ResolvedScreenText>(),
+                        })?;
+                    self.texts.push(text);
                     continue;
                 }
             };
@@ -234,6 +306,17 @@ impl ScreenExtractionBuffer {
                 .map_err(ExtractionError::ScreenScene)?;
         }
         self.images.sort_unstable_by(|left, right| {
+            compare_visual_order(
+                left.layer(),
+                left.draw_order_depth(),
+                left.source(),
+                right.layer(),
+                right.draw_order_depth(),
+                right.source(),
+            )
+        });
+        #[cfg(feature = "text")]
+        self.texts.sort_unstable_by(|left, right| {
             compare_visual_order(
                 left.layer(),
                 left.draw_order_depth(),

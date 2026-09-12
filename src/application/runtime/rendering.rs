@@ -28,6 +28,11 @@ use crate::{
 };
 
 use super::RuntimeWorld;
+#[cfg(feature = "text")]
+use crate::{
+    extraction::ScreenTextSource,
+    text::{ScreenTextVisual, TextRegistry},
+};
 
 type CameraExtractionQuery =
     QueryState<&'static ActiveCamera2d, (Allow<Disabled>, Without<Disabled>)>;
@@ -72,6 +77,11 @@ type ScreenImageExtractionQuery = QueryState<
     (Entity, &'static ManagedEntity, &'static ScreenImageVisual),
     (Allow<Disabled>, Without<Disabled>),
 >;
+#[cfg(feature = "text")]
+type ScreenTextExtractionQuery = QueryState<
+    (Entity, &'static ManagedEntity, &'static ScreenTextVisual),
+    (Allow<Disabled>, Without<Disabled>),
+>;
 type CuboidExtractionQuery = QueryState<
     (Entity, &'static ManagedEntity, &'static CuboidVisual3d),
     (Allow<Disabled>, Without<Disabled>),
@@ -103,6 +113,8 @@ pub(super) struct ExtractionQueries {
     lines: LineExtractionQuery,
     screen_rectangles: ScreenRectangleExtractionQuery,
     screen_images: ScreenImageExtractionQuery,
+    #[cfg(feature = "text")]
+    screen_texts: ScreenTextExtractionQuery,
     cuboids: CuboidExtractionQuery,
 }
 
@@ -115,6 +127,8 @@ impl ExtractionQueries {
             lines: world.query_filtered(),
             screen_rectangles: world.query_filtered(),
             screen_images: world.query_filtered(),
+            #[cfg(feature = "text")]
+            screen_texts: world.query_filtered(),
             cuboids: world.query_filtered(),
         }
     }
@@ -229,6 +243,7 @@ pub(super) fn stage_runtime_world(
     limits: RenderLimits,
     extraction: &mut ExtractionBuffers,
     images: &ImageAssetRegistry,
+    #[cfg(feature = "text")] texts: &TextRegistry,
 ) -> Result<(), ExtractionError> {
     let background = runtime
         .world
@@ -269,13 +284,24 @@ pub(super) fn stage_runtime_world(
         .map(|(raw, entity, visual)| {
             ScreenSource::Image(ScreenImageSource::new(entity.handle(raw), visual, images))
         });
+    let screen_sources = screen_rectangles.chain(screen_images);
+    #[cfg(feature = "text")]
+    let screen_sources = screen_sources.chain(
+        runtime
+            .extraction_queries
+            .screen_texts
+            .iter(&runtime.world)
+            .map(|(raw, entity, visual)| {
+                ScreenSource::Text(ScreenTextSource::new(entity.handle(raw), visual, texts))
+            }),
+    );
     extraction.stage(
         ExtractionParameters::new(runtime.generation, background, alpha, limits),
         cameras,
         circles,
         rectangles,
         lines,
-        screen_rectangles.chain(screen_images),
+        screen_sources,
     )?;
     let view = runtime.world.get_resource::<View3d>().copied();
     let cuboids = runtime

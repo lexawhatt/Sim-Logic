@@ -62,6 +62,8 @@ pub struct AppConfig {
     application_resource_limit: usize,
     render: RenderLimits,
     images: ImageAssetLimits,
+    #[cfg(feature = "text")]
+    text: crate::text::TextLimits,
 }
 
 impl Default for AppConfig {
@@ -76,6 +78,8 @@ impl Default for AppConfig {
             application_resource_limit: DEFAULT_APPLICATION_RESOURCE_LIMIT,
             render: RenderLimits::default(),
             images: ImageAssetLimits::default(),
+            #[cfg(feature = "text")]
+            text: crate::text::TextLimits::default(),
         }
     }
 }
@@ -176,6 +180,16 @@ impl AppConfig {
     /// does not enable screen-image extraction or raise presentation budgets.
     pub fn set_image_asset_limits(&mut self, limits: ImageAssetLimits) -> &mut Self {
         self.images = limits;
+        self
+    }
+
+    /// Replaces setup-time font count and retained font-byte limits.
+    ///
+    /// Does not raise render limits or initialize a window/device. The optional
+    /// `text` feature includes Engine's GPU dependencies even for headless use.
+    #[cfg(feature = "text")]
+    pub fn set_text_limits(&mut self, limits: crate::text::TextLimits) -> &mut Self {
+        self.text = limits;
         self
     }
 
@@ -328,6 +342,8 @@ pub struct Application<A: Action> {
     pub(crate) events: EventRegistry,
     pub(crate) application_resources: ApplicationResourceRegistry,
     pub(crate) images: ImageAssetRegistry,
+    #[cfg(feature = "text")]
+    pub(crate) texts: crate::text::TextRegistry,
     #[cfg(feature = "easter-eggs")]
     pub(crate) crab_image: Option<ImageAssetId>,
     pub(crate) bindings: ActionBindings<A>,
@@ -365,6 +381,10 @@ impl<A: Action> Application<A> {
         components
             .approve::<ScreenImageVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
+        #[cfg(feature = "text")]
+        components
+            .approve::<crate::text::ScreenTextVisual>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
         components
             .approve::<CuboidVisual3d>()
             .map_err(ApplicationCreationError::StandardComponent)?;
@@ -397,6 +417,8 @@ impl<A: Action> Application<A> {
             events: EventRegistry::default(),
             application_resources: ApplicationResourceRegistry::default(),
             images: ImageAssetRegistry::new(application, config.images),
+            #[cfg(feature = "text")]
+            texts: crate::text::TextRegistry::new(application, config.text),
             #[cfg(feature = "easter-eggs")]
             crab_image: None,
             bindings: ActionBindings::new(),
@@ -429,6 +451,21 @@ impl<A: Action> Application<A> {
         pixels: &[u8],
     ) -> Result<ImageAssetId, ImageAssetError> {
         self.images.register(width, height, pixels)
+    }
+
+    /// Registers an owned trusted TTF/OTF asset and fixed logical text settings.
+    ///
+    /// Parsing and limits are checked before publishing an opaque font handle;
+    /// equal registrations remain distinct. Clones share font storage and the
+    /// handle survives World replacement. No window, GPU call, font discovery,
+    /// or download occurs. The caller supplies licensed, trusted font bytes.
+    #[cfg(feature = "text")]
+    pub fn register_font(
+        &mut self,
+        bytes: Vec<u8>,
+        settings: crate::text::TextSettings,
+    ) -> Result<crate::text::TextFont, crate::text::TextError> {
+        self.texts.register(bytes, settings)
     }
 
     /// Approves a flat tuple of one through fifteen hook-free component types.

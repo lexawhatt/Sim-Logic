@@ -105,6 +105,15 @@ pub(super) enum ScreenPresentationError {
     Images(DesktopImageError),
     Composition(FrameComposerError),
     ThreeD(super::three_d::DesktopThreeDError),
+    #[cfg(feature = "text")]
+    Text(super::text::DesktopTextError),
+}
+
+#[cfg(feature = "text")]
+impl From<super::text::DesktopTextError> for ScreenPresentationError {
+    fn from(error: super::text::DesktopTextError) -> Self {
+        Self::Text(error)
+    }
 }
 
 impl From<super::three_d::DesktopThreeDError> for ScreenPresentationError {
@@ -178,20 +187,52 @@ impl<K: Copy + Eq, V> ResourceCache<K, V> {
 
 pub(super) struct DesktopImages {
     resources: ResourceCache<ImageAssetId, Image2d>,
-    referenced: Vec<ImageAssetId>,
+    referenced: ScreenReferences,
+    #[cfg(feature = "text")]
+    texts: super::text::DesktopText,
+}
+
+#[derive(Default)]
+struct ScreenReferences {
+    images: Vec<ImageAssetId>,
+    #[cfg(feature = "text")]
+    fonts: Vec<crate::text::TextFont>,
+}
+
+impl ScreenReferences {
+    fn clear(&mut self) {
+        self.images.clear();
+        #[cfg(feature = "text")]
+        self.fonts.clear();
+    }
+}
+
+pub(super) fn needs_managed_presentation(
+    extracted: &ExtractedFrame,
+    _images: &DesktopImages,
+) -> bool {
+    #[cfg(feature = "text")]
+    if !extracted.resolved_screen_texts().is_empty() || _images.texts.has_runs() {
+        return true;
+    }
+    !extracted.resolved_screen_images().is_empty()
 }
 
 impl DesktopImages {
     pub(super) fn new() -> Self {
         Self {
             resources: ResourceCache::new(),
-            referenced: Vec::new(),
+            referenced: ScreenReferences::default(),
+            #[cfg(feature = "text")]
+            texts: super::text::DesktopText::default(),
         }
     }
 
     pub(super) fn clear(&mut self) {
         self.resources.clear();
         self.referenced.clear();
+        #[cfg(feature = "text")]
+        self.texts.clear();
     }
 
     pub(super) fn preflight_three_d(
@@ -335,7 +376,7 @@ impl FrameWork {
 fn preflight(
     extracted: &ExtractedFrame,
     registry: &ImageAssetRegistry,
-    referenced: &mut Vec<ImageAssetId>,
+    referenced: &mut ScreenReferences,
     budget: FrameBudget,
 ) -> Result<(), ScreenPresentationError> {
     preflight_with_target(extracted, registry, referenced, budget, None)
@@ -344,17 +385,18 @@ fn preflight(
 fn preflight_with_target(
     extracted: &ExtractedFrame,
     registry: &ImageAssetRegistry,
-    referenced: &mut Vec<ImageAssetId>,
+    referenced: &mut ScreenReferences,
     budget: FrameBudget,
     target_bytes: Option<usize>,
 ) -> Result<(), ScreenPresentationError> {
     referenced.clear();
-    if referenced.capacity() < registry.len() {
-        referenced.try_reserve_exact(registry.len()).map_err(|_| {
-            FrameComposerError::AllocationFailed {
+    if referenced.images.capacity() < registry.len() {
+        referenced
+            .images
+            .try_reserve_exact(registry.len())
+            .map_err(|_| FrameComposerError::AllocationFailed {
                 requested_bytes: registry.len().saturating_mul(size_of::<ImageAssetId>()),
-            }
-        })?;
+            })?;
     }
     let mut work = FrameWork::default();
     work.scene(extracted.world_scene().statistics());
@@ -380,13 +422,47 @@ fn preflight_with_target(
                     source: visual.source(),
                     image,
                 })?;
-                if !referenced.contains(&image) {
+                if !referenced.images.contains(&image) {
                     // Every identity resolves in the immutable bounded registry,
                     // so the reserved registry-sized vector cannot grow here.
-                    referenced.push(image);
+                    referenced.images.push(image);
                     work.texture_bytes = work.texture_bytes.saturating_add(asset.pixels().len());
                 }
                 work.image();
+            }
+            #[cfg(feature = "text")]
+            ScreenDraw::Text { index } => {
+                let text = extracted
+                    .resolved_screen_texts()
+                    .get(index)
+                    .ok_or(super::text::DesktopTextError::InvalidDrawPlan)?;
+                // Shaped count includes spacing glyphs, so this is conservative.
+                // Engine validates actual raster geometry and draw count later.
+                if text.text().is_empty() {
+                    continue;
+                }
+                let font = text.font();
+                if !referenced.fonts.contains(font) {
+                    referenced.fonts.try_reserve(1).map_err(|_| {
+                        super::text::DesktopTextError::Allocation {
+                            requested_bytes: size_of::<crate::text::TextFont>(),
+                        }
+                    })?;
+                    referenced.fonts.push(font.clone());
+                    let atlas = font.settings().atlas_budget();
+                    work.texture_bytes = work.texture_bytes.saturating_add(
+                        (atlas.width() as usize)
+                            .saturating_mul(atlas.height() as usize)
+                            .saturating_mul(4),
+                    );
+                }
+                work.image();
+                work.vertices = work.vertices.saturating_add(
+                    text.visual()
+                        .glyph_count()
+                        .saturating_sub(1)
+                        .saturating_mul(6),
+                );
             }
         }
     }
@@ -436,6 +512,8 @@ pub(super) fn present(
         .map_err(|_| FrameComposerError::Frame(RendererFrameError::InvalidViewport))?;
     let camera = screen_camera(viewport)?;
     images.prepare(renderer, registry, extracted)?;
+    #[cfg(feature = "text")]
+    images.texts.prepare(renderer, extracted)?;
 
     let mut frame = renderer.begin_frame(extracted.background(), budget)?;
     frame.draw_scene(
@@ -493,6 +571,16 @@ pub(super) fn present(
                     sampling,
                     options,
                 )?;
+            }
+            #[cfg(feature = "text")]
+            ScreenDraw::Text { index } => {
+                let text = extracted
+                    .resolved_screen_texts()
+                    .get(index)
+                    .ok_or(super::text::DesktopTextError::InvalidDrawPlan)?;
+                if !text.text().is_empty() {
+                    images.texts.draw(&mut frame, text, options)?;
+                }
             }
         }
     }
@@ -615,10 +703,10 @@ mod tests {
                 ScreenDraw::Rectangles { run: 2 },
             ]
         );
-        let mut referenced = Vec::new();
+        let mut referenced = ScreenReferences::default();
         let enough = FrameBudget::new(6, 100, 1000, 10000, 16, 100);
         preflight(extracted, runner.image_assets(), &mut referenced, enough).unwrap();
-        assert_eq!(referenced, [asset]);
+        assert_eq!(referenced.images, [asset]);
         let passes = FrameBudget::new(5, 100, 1000, 10000, 16, 100);
         assert!(matches!(
             preflight(extracted, runner.image_assets(), &mut referenced, passes),

@@ -3,9 +3,10 @@
 use std::{error::Error, fmt, mem::size_of};
 
 use sim_engine::{
-    LogicalViewport, LogicalViewportError, Mesh3d, Mesh3dError, Mesh3dRenderError,
-    Mesh3dRenderReport, Mesh3dResourceError, MeshEdge3d, MeshStyle3d, Object3dId, RenderTarget2d,
-    RenderTarget3d, RetainedMesh3d, Scene3d, Scene3dError, Transform3d, Vec3, WgpuRenderer,
+    LogicalViewport, LogicalViewportError, Mesh3d, Mesh3dError, Mesh3dRenderBudget,
+    Mesh3dRenderError, Mesh3dRenderReport, Mesh3dResourceError, MeshEdge3d, MeshStyle3d,
+    Object3dId, RenderTarget2d, RenderTarget3d, RetainedMesh3d, Scene3d, Scene3dBudget,
+    Scene3dError, Transform3d, Vec3, WgpuRenderer,
 };
 
 use crate::{
@@ -20,8 +21,9 @@ use crate::{
 ///
 /// Immutable mesh uploads, target allocation, and earlier successful prepasses
 /// may remain cached when later composition fails. No partial surface frame is
-/// presented. Engine's whole-scene portability failures do not identify an
-/// individual cuboid; object-update failures do preserve their managed source.
+/// presented. Instance-local Engine preflight and object-update failures preserve
+/// their current managed source. Camera, target, and aggregate-capacity failures
+/// remain scene-wide rather than being attributed to an arbitrary cuboid.
 #[derive(Debug)]
 pub enum DesktopThreeDError {
     /// An independent 3D allowance was exceeded before preparing GPU resources.
@@ -62,7 +64,18 @@ pub enum DesktopThreeDError {
         /// Concrete scene failure.
         error: Scene3dError,
     },
-    /// Engine rejected the complete scene before depth-prepass submission.
+    /// Engine's authoritative preflight rejected one managed cuboid.
+    ObjectRender {
+        /// Current managed source occupying the retained Engine slot.
+        source: LogicEntity,
+        /// Concrete preflight failure, retaining its complete Engine object ID.
+        error: Mesh3dRenderError,
+    },
+    /// Engine rejected the scene or an object with no current managed source.
+    ///
+    /// Camera, ownership, and aggregate-capacity failures are scene-wide. An
+    /// unrecognized Engine object ID remains in the error without guessing its
+    /// source or discarding the original diagnostic.
     Render(Mesh3dRenderError),
     /// Private retained cache state was inconsistent.
     InvalidCache,
@@ -97,6 +110,10 @@ impl fmt::Display for DesktopThreeDError {
                 formatter,
                 "3D cuboid {source:?} scene update failed: {error}"
             ),
+            Self::ObjectRender { source, error } => write!(
+                formatter,
+                "3D cuboid {source:?} depth prepass failed: {error}"
+            ),
             Self::Render(error) => write!(formatter, "3D depth prepass failed: {error}"),
             Self::InvalidCache => formatter.write_str("retained 3D cache is inconsistent"),
             Self::InvalidTargetLayout => {
@@ -116,6 +133,7 @@ impl Error for DesktopThreeDError {
             Self::Scene(error) => Some(error),
             Self::Cuboid { error, .. } => Some(error),
             Self::Object { error, .. } => Some(error),
+            Self::ObjectRender { error, .. } => Some(error),
             Self::Render(error) => Some(error),
             _ => None,
         }
@@ -159,6 +177,7 @@ impl DesktopThreeD {
     ) -> Result<Mesh3dRenderReport, DesktopThreeDError> {
         let (width, height) = renderer.size();
         check_limits(snapshot.cuboids().len(), width, height, limits)?;
+        let render_budget = engine_render_budget(snapshot.cuboids().len(), limits);
         let viewport = renderer
             .logical_viewport()
             .map_err(DesktopThreeDError::Viewport)?;
@@ -181,7 +200,8 @@ impl DesktopThreeD {
             .is_none_or(|scene| scene.background() != snapshot.view().background())
         {
             let scene =
-                Scene3d::new(snapshot.view().background()).map_err(DesktopThreeDError::Scene)?;
+                Scene3d::with_budget(snapshot.view().background(), engine_scene_budget(limits)?)
+                    .map_err(DesktopThreeDError::Scene)?;
             self.scene = Some(scene);
             // New scene IDs also invalidate every last-applied field together.
             self.slots.clear();
@@ -197,6 +217,7 @@ impl DesktopThreeD {
                 .style()
                 .map_err(|error| DesktopThreeDError::Cuboid { source, error })?;
             let desired = AppliedState {
+                source,
                 transform: record.transform(),
                 style,
                 visible: true,
@@ -236,6 +257,12 @@ impl DesktopThreeD {
             height,
             viewport,
         };
+        if !self.target.matches(descriptor) {
+            // Engine 0.3 composition caches bindings that retain this target's
+            // texture. Release those host references before replacing it, not
+            // only our target handle. Steady-state frames keep their cache.
+            renderer.clear_frame_cache();
+        }
         self.target.ensure(descriptor, || {
             renderer
                 .create_render_target3d(width, height, viewport)
@@ -243,8 +270,8 @@ impl DesktopThreeD {
         })?;
         let target = self.target.get().ok_or(DesktopThreeDError::InvalidCache)?;
         renderer
-            .render_scene3d_to_target(target, scene, camera)
-            .map_err(DesktopThreeDError::Render)
+            .render_scene3d_to_target_with_budget(target, scene, camera, render_budget)
+            .map_err(|error| map_render_error(error, &self.slots))
     }
 }
 
@@ -266,6 +293,7 @@ impl SceneSlot {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AppliedState {
+    source: LogicEntity,
     transform: Transform3d,
     style: MeshStyle3d,
     visible: bool,
@@ -284,8 +312,8 @@ impl AppliedState {
         desired: Self,
         mut apply: impl FnMut(SlotChange) -> Result<(), E>,
     ) -> Result<(), E> {
-        // Engine setters each search its retained IDs linearly. Unchanged
-        // fields must avoid those searches, including already-hidden slots.
+        // Engine 0.3 indexes retained IDs, but unchanged fields still avoid
+        // unnecessary validation and setter work, including hidden slots.
         // Record only successful setters, so a later failed setter never makes
         // this cache claim a value that the retained scene has not accepted.
         if self.transform != desired.transform {
@@ -300,8 +328,83 @@ impl AppliedState {
             apply(SlotChange::Visible(desired.visible))?;
             self.visible = desired.visible;
         }
+        // Slots are reused by snapshot order, not permanently bound to an ECS
+        // entity. Equal geometry must still refresh attribution after despawn,
+        // reorder, or World replacement. A failed update is not rendered.
+        self.source = desired.source;
         Ok(())
     }
+}
+
+fn map_render_error(error: Mesh3dRenderError, slots: &[SceneSlot]) -> DesktopThreeDError {
+    let source = error.object_id().and_then(|id| {
+        find_object_source(
+            id,
+            slots
+                .iter()
+                .map(|slot| (slot.id, slot.applied.source, slot.applied.visible)),
+        )
+    });
+    match source {
+        Some(source) => DesktopThreeDError::ObjectRender { source, error },
+        None => DesktopThreeDError::Render(error),
+    }
+}
+
+fn find_object_source<Id: Eq>(
+    id: Id,
+    slots: impl IntoIterator<Item = (Id, LogicEntity, bool)>,
+) -> Option<LogicEntity> {
+    // Compare complete opaque handles, never their scene-local diagnostic
+    // numbers. This scan runs only on rejected prepasses, not every frame.
+    slots
+        .into_iter()
+        .find_map(|(slot_id, source, visible)| (visible && slot_id == id).then_some(source))
+}
+
+fn engine_scene_budget(limits: ThreeDRenderLimits) -> Result<Scene3dBudget, DesktopThreeDError> {
+    let defaults = Scene3dBudget::default();
+    // Engine requires a nonzero object ceiling even for a background-only
+    // scene. Logic's earlier count check still prohibits objects at a zero cap.
+    // Keep finite Engine memory ceilings; this bridge owns one shared cube and
+    // no textured meshes. Larger author object limits cannot bypass byte caps.
+    Scene3dBudget::new(
+        limits.max_cuboids().max(1),
+        defaults.max_storage_bytes(),
+        defaults.max_mesh_cpu_bytes(),
+        defaults.max_mesh_gpu_bytes(),
+    )
+    .map(|budget| budget.with_texture_limits(0, 0))
+    .map_err(DesktopThreeDError::Scene)
+}
+
+fn engine_render_budget(count: usize, limits: ThreeDRenderLimits) -> Mesh3dRenderBudget {
+    // Engine caps generated topology, while Logic caps all submitted triangles.
+    // Every crossing object replaces its entire 12-triangle cube with generated
+    // geometry. Reserving room for count-1 retained cubes therefore preserves
+    // the total ceiling without a second clipping implementation or preflight.
+    // This is conservative when multiple cubes cross: Engine 0.3 preflight does
+    // not expose the retained/total submitted triangle count needed to relax it.
+    // Saturation fails closed even for arithmetic beyond a valid count check.
+    let retained_triangles = count.saturating_sub(1).saturating_mul(12);
+    let defaults = Mesh3dRenderBudget::default();
+    let triangles = if count == 0 {
+        0
+    } else {
+        limits
+            .max_triangles()
+            .saturating_sub(retained_triangles)
+            .min(defaults.max_generated_triangles())
+    };
+    Mesh3dRenderBudget::new(
+        triangles
+            .saturating_mul(3)
+            .min(defaults.max_generated_vertices()),
+        triangles,
+        // Engine owns its generated vertex/edge layouts. Do not encode their
+        // private byte strides here; retain its explicit finite upload ceiling.
+        defaults.max_generated_upload_bytes(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -328,16 +431,18 @@ impl<T> TargetCache<T> {
         self.entry.as_ref().map(|(_, target)| target)
     }
 
+    fn matches(&self, descriptor: TargetDescriptor) -> bool {
+        self.entry
+            .as_ref()
+            .is_some_and(|(key, _)| *key == descriptor)
+    }
+
     fn ensure<E>(
         &mut self,
         descriptor: TargetDescriptor,
         create: impl FnOnce() -> Result<T, E>,
     ) -> Result<(), E> {
-        if self
-            .entry
-            .as_ref()
-            .is_some_and(|(key, _)| *key == descriptor)
-        {
+        if self.matches(descriptor) {
             return Ok(());
         }
         // Release obsolete resources before allocation, including failed resize.
@@ -444,10 +549,22 @@ fn unit_cube() -> Result<Mesh3d, DesktopThreeDError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::{ApplicationId, WorldGeneration};
+    use bevy_ecs::entity::Entity;
     use sim_engine::{Color, Rotation3d, SurfaceStyle3d};
+
+    fn source(sequence: u64, row: u32) -> LogicEntity {
+        let application = ApplicationId::from_raw(1);
+        LogicEntity::new(
+            application,
+            WorldGeneration::new(application, sequence),
+            Entity::from_raw_u32(row).unwrap(),
+        )
+    }
 
     fn applied_state() -> AppliedState {
         AppliedState {
+            source: source(1, 0),
             transform: Transform3d::IDENTITY,
             style: MeshStyle3d::surface(SurfaceStyle3d::opaque(Color::WHITE).unwrap()),
             visible: true,
@@ -456,6 +573,7 @@ mod tests {
 
     fn changed_state() -> AppliedState {
         AppliedState {
+            source: source(1, 0),
             transform: Transform3d::new(
                 Vec3::new(1.0, 2.0, 3.0).unwrap(),
                 Rotation3d::IDENTITY,
@@ -717,3 +835,7 @@ mod tests {
         assert!(cache.get().is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "three_d/migration_tests.rs"]
+mod migration_tests;

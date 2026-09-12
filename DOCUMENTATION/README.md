@@ -26,6 +26,8 @@ a desktop example to testing the same application without a window.
   while the World camera moves.
 - [Screen images](rendering/Screen-Images.md): assets, crop, tint, ordering,
   memory limits and the optional Ferris helper.
+- [Screen text](rendering/Text.md): optional real-font labels, alignment,
+  changing strings, limits and shared rendering caches.
 - [Geometric 3D](rendering/ThreeD.md): cuboids, depth and switching views.
 
 ## Example applications
@@ -46,7 +48,7 @@ For exact signatures and error contracts, build the API reference:
 cargo doc --no-deps --open
 ```
 
-Add `--all-features` to include the optional audio and Ferris APIs.
+Add `--all-features` to include the optional audio, text and Ferris APIs.
 
 ## Current boundaries
 

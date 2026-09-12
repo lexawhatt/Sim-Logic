@@ -7,11 +7,17 @@
 mod images;
 #[path = "desktop/pointer.rs"]
 mod pointer;
+#[cfg(feature = "text")]
+#[path = "desktop/text.rs"]
+mod text;
 #[path = "desktop/three_d.rs"]
 mod three_d;
 
 pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
+pub use sim_engine::FrameCacheBudget;
+#[cfg(feature = "text")]
+pub use text::DesktopTextError;
 pub use three_d::DesktopThreeDError;
 
 use std::{error::Error, fmt, sync::Arc, time::Instant};
@@ -62,6 +68,7 @@ pub struct DesktopConfig {
     logical_width: f64,
     logical_height: f64,
     present_mode: RendererPresentMode,
+    frame_cache: FrameCacheBudget,
 }
 
 impl Default for DesktopConfig {
@@ -71,6 +78,7 @@ impl Default for DesktopConfig {
             logical_width: DEFAULT_WIDTH,
             logical_height: DEFAULT_HEIGHT,
             present_mode: RendererPresentMode::Vsync,
+            frame_cache: FrameCacheBudget::default(),
         }
     }
 }
@@ -90,6 +98,7 @@ impl DesktopConfig {
             logical_width,
             logical_height,
             present_mode: RendererPresentMode::Vsync,
+            frame_cache: FrameCacheBudget::default(),
         })
     }
 
@@ -97,6 +106,21 @@ impl DesktopConfig {
     pub fn set_present_mode(&mut self, present_mode: RendererPresentMode) -> &mut Self {
         self.present_mode = present_mode;
         self
+    }
+
+    /// Sets Engine's idle composition-cache limits independently of active frame limits.
+    ///
+    /// Zero cache limits disable retention, not drawing. This does not bound
+    /// image/font assets, 3D scene resources, driver memory or in-flight work.
+    /// Defaults to Engine's finite cache budget, including packed uniform uploads.
+    pub fn set_frame_cache_budget(&mut self, budget: FrameCacheBudget) -> &mut Self {
+        self.frame_cache = budget;
+        self
+    }
+
+    /// Returns the separate idle composition-cache budget.
+    pub const fn frame_cache_budget(&self) -> FrameCacheBudget {
+        self.frame_cache
     }
 
     /// Returns the configured title.
@@ -304,6 +328,15 @@ pub enum DesktopRunError {
         /// Canonical logical outcome that preceded image preparation.
         logic_frame: Box<LogicFrameReport>,
     },
+    /// Preparing managed text failed after CPU publication. Earlier cache
+    /// updates may remain, but no partial surface frame is presented.
+    #[cfg(feature = "text")]
+    TextPreparation {
+        /// Source-attributed font atlas, glyph run, or cache failure.
+        error: DesktopTextError,
+        /// Canonical logical outcome preceding the failure.
+        logic_frame: Box<LogicFrameReport>,
+    },
     /// Preparing or submitting the separate 3D depth prepass failed after the
     /// logical frame completed. Retained resources can remain warmed; no
     /// partial surface frame is presented and canonical state is not rolled back.
@@ -365,6 +398,10 @@ impl fmt::Display for DesktopRunError {
             Self::ImagePreparation { error, .. } => {
                 write!(formatter, "desktop image preparation failed: {error}")
             }
+            #[cfg(feature = "text")]
+            Self::TextPreparation { error, .. } => {
+                write!(formatter, "desktop text preparation failed: {error}")
+            }
             Self::ThreeDPreparation { error, .. } => {
                 write!(formatter, "desktop 3D preparation failed: {error}")
             }
@@ -387,6 +424,8 @@ impl Error for DesktopRunError {
             Self::BeginFrame(error) => Some(error),
             Self::Presentation { error, .. } => Some(error),
             Self::ImagePreparation { error, .. } => Some(error),
+            #[cfg(feature = "text")]
+            Self::TextPreparation { error, .. } => Some(error),
             Self::ThreeDPreparation { error, .. } => Some(error),
             Self::Recovery { error, .. } => Some(error),
             Self::InputEventLimitExceeded { .. }
@@ -688,7 +727,7 @@ impl<A: Action> DesktopHost<A> {
                     self.three_d.color_target(),
                 )
             })()
-        } else if extracted.resolved_screen_images().is_empty() {
+        } else if !images::needs_managed_presentation(extracted, &self.images) {
             present_extracted(renderer, extracted, self.frame_budget)
                 .map_err(ScreenPresentationError::Composition)
         } else {
@@ -708,6 +747,17 @@ impl<A: Action> DesktopHost<A> {
                 self.stop(
                     event_loop,
                     DesktopRunError::ImagePreparation {
+                        error,
+                        logic_frame: Box::new(report),
+                    },
+                );
+                return;
+            }
+            #[cfg(feature = "text")]
+            Err(ScreenPresentationError::Text(error)) => {
+                self.stop(
+                    event_loop,
+                    DesktopRunError::TextPreparation {
                         error,
                         logic_frame: Box::new(report),
                     },
@@ -879,6 +929,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             }
         };
         let notify_window = Arc::clone(&window);
+        renderer.set_frame_cache_budget(self.config.frame_cache);
         renderer.set_pre_present_notify(move || notify_window.pre_present_notify());
         self.window_occluded = extent_is_occluded(size.width, size.height);
         self.last_frame = Instant::now();

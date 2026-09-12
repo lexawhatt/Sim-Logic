@@ -39,6 +39,7 @@ examples cover individual features or combine them into a small game:
 | [image_board](rendering/Screen-Images.md) | Shared immutable image pixels, cropping, filtering, tint, and mixed panel/image order. |
 | [iron_maze](examples/Iron-Maze.md) | A playable 2.5D shooter with fixed game rules, a screen-rectangle view, and level restart. |
 | [territory_wars](examples/Territory-Wars.md) | Island conquest against six bots, independent economic/combat rules, and an opt-in debug/cheat panel. |
+| [text_labels](rendering/Text.md) | Real Latin/Cyrillic labels, changing text, alignment and mixed screen order; add `--features text`. |
 
 Run any of them with `cargo run --release --example <name>`.
 

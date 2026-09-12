@@ -26,6 +26,19 @@ pub enum ScreenDraw {
         /// Index into the snapshot's resolved image list.
         index: usize,
     },
+    /// One prepared screen label, sharing mixed painter order with other kinds.
+    #[cfg(feature = "text")]
+    Text {
+        /// Index into the snapshot's resolved text list.
+        index: usize,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum NonRectangleKind {
+    Image,
+    #[cfg(feature = "text")]
+    Text,
 }
 
 pub(super) struct RectangleRun {
@@ -48,7 +61,7 @@ impl ScreenExtractionBuffer {
 
     fn compose_inner(&mut self, budget: SceneBudget) -> Result<(), ExtractionError> {
         self.draws.clear();
-        if self.images.is_empty() {
+        if !self.has_non_rectangles() {
             // Keep the established single-scene path and do not build duplicate
             // rectangle runs for applications that have not enabled images.
             self.runs.clear();
@@ -60,32 +73,75 @@ impl ScreenExtractionBuffer {
 
         let mut rectangle = 0;
         let mut image = 0;
+        #[cfg(feature = "text")]
+        let mut text = 0;
         let mut run_start = 0;
         let mut run_count = 0;
-        while rectangle < self.resolved.len() || image < self.images.len() {
-            let take_rectangle = match (self.resolved.get(rectangle), self.images.get(image)) {
+        loop {
+            let next = self.images.get(image).map(|image| {
+                (
+                    NonRectangleKind::Image,
+                    image.layer(),
+                    image.draw_order_depth(),
+                    image.source(),
+                )
+            });
+            #[cfg(feature = "text")]
+            let next = match (next, self.texts.get(text)) {
+                (Some(image), Some(text))
+                    if !compare_visual_order(
+                        image.1,
+                        image.2,
+                        image.3,
+                        text.layer(),
+                        text.draw_order_depth(),
+                        text.source(),
+                    )
+                    .is_gt() =>
+                {
+                    Some(image)
+                }
+                (_, Some(text)) => Some((
+                    NonRectangleKind::Text,
+                    text.layer(),
+                    text.draw_order_depth(),
+                    text.source(),
+                )),
+                (image, None) => image,
+            };
+            let take_rectangle = match (self.resolved.get(rectangle), next) {
                 (Some(left), Some(right)) => !compare_visual_order(
                     left.layer(),
                     left.draw_order_depth(),
                     left.source(),
-                    right.layer(),
-                    right.draw_order_depth(),
-                    right.source(),
+                    right.1,
+                    right.2,
+                    right.3,
                 )
                 .is_gt(),
                 (Some(_), None) => true,
-                _ => false,
+                (None, Some(_)) => false,
+                (None, None) => break,
             };
             if take_rectangle {
                 rectangle += 1;
-            } else {
+            } else if let Some((kind, _, _, _)) = next {
                 if run_start != rectangle {
                     self.prepare_run(run_count, run_start, rectangle, budget)?;
                     self.push_draw(ScreenDraw::Rectangles { run: run_count })?;
                     run_count += 1;
                 }
-                self.push_draw(ScreenDraw::Image { index: image })?;
-                image += 1;
+                match kind {
+                    NonRectangleKind::Image => {
+                        self.push_draw(ScreenDraw::Image { index: image })?;
+                        image += 1;
+                    }
+                    #[cfg(feature = "text")]
+                    NonRectangleKind::Text => {
+                        self.push_draw(ScreenDraw::Text { index: text })?;
+                        text += 1;
+                    }
+                }
                 run_start = rectangle;
             }
         }

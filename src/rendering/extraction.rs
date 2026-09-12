@@ -21,7 +21,11 @@ use std::{cmp::Ordering, error::Error, fmt, mem::size_of};
 
 #[path = "extraction/screen.rs"]
 mod screen;
+#[cfg(feature = "text")]
+pub use screen::ResolvedScreenText;
 use screen::ScreenExtractionBuffer;
+#[cfg(feature = "text")]
+pub(crate) use screen::ScreenTextSource;
 pub use screen::{ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw};
 pub(crate) use screen::{ScreenImageSource, ScreenRectangleSource, ScreenSource};
 
@@ -282,6 +286,15 @@ impl ExtractedFrame {
         self.storage.screen.images()
     }
 
+    /// Returns current prepared labels in their relative mixed-screen order.
+    ///
+    /// Strings, metrics, and fonts share their component's immutable CPU
+    /// preparation. No shaping, GPU allocation, or fixed interpolation occurs.
+    #[cfg(feature = "text")]
+    pub fn resolved_screen_texts(&self) -> &[ResolvedScreenText] {
+        self.storage.screen.texts()
+    }
+
     /// Returns the enabled 3D view and cuboids, or None when 3D is suppressed.
     ///
     /// Desktop composition places this opaque depth target above the 2D world
@@ -299,9 +312,9 @@ impl ExtractedFrame {
 
     /// Returns the exact screen composition after the world scene.
     ///
-    /// Contiguous rectangle runs and individual images share layer, depth,
-    /// and stable source order. On an exact same-source tie the rectangle is
-    /// first. Empty screen content produces no items. This plan does not
+    /// Contiguous rectangle runs, images, and optional text share layer, depth,
+    /// and stable source order. Exact same-source ties put rectangles first,
+    /// then images, then text. Empty screen content produces no items. This plan does not
     /// replace the desktop compositor's aggregate budget checks.
     pub fn screen_draws(&self) -> &[ScreenDraw] {
         self.storage.screen.draws()
@@ -540,6 +553,44 @@ pub enum ExtractionError {
         /// Configured image source limit (zero by default).
         limit: usize,
     },
+    /// The opted-in enabled screen-text source count was exceeded.
+    #[cfg(feature = "text")]
+    ScreenTextLimitExceeded {
+        /// Configured label count limit, zero by default.
+        limit: usize,
+    },
+    /// Aggregate enabled label strings exceed the UTF-8 byte allowance.
+    #[cfg(feature = "text")]
+    ScreenTextBytesLimitExceeded {
+        /// Configured inclusive UTF-8 byte limit.
+        limit: usize,
+        /// Requested aggregate bytes; usize::MAX also represents overflow.
+        requested: usize,
+    },
+    /// Aggregate enabled labels exceed the shaped-glyph allowance.
+    #[cfg(feature = "text")]
+    ScreenTextGlyphLimitExceeded {
+        /// Configured inclusive shaped-glyph count limit.
+        limit: usize,
+        /// Requested aggregate glyphs; usize::MAX also represents overflow.
+        requested: usize,
+    },
+    /// A label uses a font not registered by this Application.
+    #[cfg(feature = "text")]
+    UnregisteredTextFont {
+        /// Managed source of the foreign or unavailable font.
+        entity: LogicEntity,
+        /// Shared immutable font whose Application provenance was rejected.
+        font: crate::text::TextFont,
+    },
+    /// A label violated its prepared-text, position, or tint contract.
+    #[cfg(feature = "text")]
+    InvalidScreenText {
+        /// Managed source whose text visual was rejected.
+        entity: LogicEntity,
+        /// Exact component validation failure.
+        error: crate::text::TextError,
+    },
     /// An image handle was not registered by this Application.
     UnregisteredImageAsset {
         /// Managed source of the invalid reference.
@@ -626,6 +677,31 @@ impl fmt::Display for ExtractionError {
                 formatter,
                 "extracted screen image count exceeds the limit of {limit}"
             ),
+            #[cfg(feature = "text")]
+            Self::ScreenTextLimitExceeded { limit } => write!(
+                formatter,
+                "extracted screen text count exceeds the limit of {limit}"
+            ),
+            #[cfg(feature = "text")]
+            Self::ScreenTextBytesLimitExceeded { limit, requested } => write!(
+                formatter,
+                "screen text requests {requested} UTF-8 bytes, exceeding {limit}"
+            ),
+            #[cfg(feature = "text")]
+            Self::ScreenTextGlyphLimitExceeded { limit, requested } => write!(
+                formatter,
+                "screen text requests {requested} shaped glyphs, exceeding {limit}"
+            ),
+            #[cfg(feature = "text")]
+            Self::UnregisteredTextFont { entity, font } => write!(
+                formatter,
+                "screen text entity {entity:?} references unregistered font {font:?}"
+            ),
+            #[cfg(feature = "text")]
+            Self::InvalidScreenText { entity, error } => write!(
+                formatter,
+                "screen text entity {entity:?} is invalid: {error}"
+            ),
             Self::UnregisteredImageAsset { entity, image } => write!(
                 formatter,
                 "screen image entity {entity:?} references unregistered image {image:?}"
@@ -659,6 +735,8 @@ impl Error for ExtractionError {
             Self::ScreenScene(error) => Some(error),
             Self::InvalidScreenVisual { error, .. } => Some(error),
             Self::InvalidScreenImage { error, .. } => Some(error),
+            #[cfg(feature = "text")]
+            Self::InvalidScreenText { error, .. } => Some(error),
             _ => None,
         }
     }

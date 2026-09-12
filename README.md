@@ -1,9 +1,9 @@
 # Sim;Logic
 
 Sim;Logic is a code-first application layer for
-[Sim;Engine](https://crates.io/crates/sim-engine). It keeps the program in
-ordinary Rust, but supplies the pieces that otherwise have to be rebuilt for
-every interactive simulation: entities and components, ordered systems, typed
+[Sim;Engine](https://crates.io/crates/sim-engine), currently pinned to 0.3.0.
+It keeps the program in ordinary Rust, but supplies the pieces that otherwise
+have to be rebuilt for every interactive simulation: entities and components, ordered systems, typed
 input, fixed updates, interpolation, World replacement, and a window/render
 loop.
 
@@ -61,6 +61,15 @@ layout, and the shared headless tests.
 
 ## Current slice
 
+Optional real-font labels use Engine's shaping and retained rendering:
+
+```bash
+cargo run --release --features text --example text_labels
+```
+
+The [text guide](DOCUMENTATION/rendering/Text.md) covers font registration,
+baseline alignment, changing strings, headless inspection and bounded caches.
+
 The first experimental slice can:
 
 - create one desktop window or run the same lifecycle headlessly;
@@ -98,19 +107,23 @@ The first experimental slice can:
   layout that keeps updating while simulation is paused;
 - register bounded immutable RGBA8 assets and draw screen images with source
   regions, tint, filtering, and shared rectangle/image ordering;
+- register fonts and draw optional single-line screen text with alignment,
+  changing content, tint, and shared text/image/rectangle ordering;
 - extract opt-in colored cuboids and a current-value 3D view, with retained
-  desktop geometry, a bounded depth target, and screen overlays;
+  desktop geometry, bounded camera-plane clipping, a depth target, and screen
+  overlays; object-local preflight errors preserve the current managed entity;
 - optionally send one application-owned mono PCM source to an audio device,
   with explicit buffer policy, lifetime and diagnostics;
 - commit A-to-B World replacement and extract B in the same logical frame.
 
 This is not a finished general-purpose engine. Generic transition payloads,
 asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit,
-managed text, arbitrary 3D assets, a World-scoped audio service, and parallel
+arbitrary 3D assets, a World-scoped audio service, and parallel
 schedules are deliberately not public yet. The [audio output](DOCUMENTATION/guides/Audio-Output.md)
 adapter is optional, immediate and independent of World transactions; it is
 not a full sound engine. The [3D bridge](DOCUMENTATION/rendering/ThreeD.md) currently
-supports cuboids, not arbitrary meshes, lighting or materials.
+supports cuboids, not arbitrary meshes, lighting or materials. Engine 0.3's
+additional mesh and texture capabilities are not yet managed Logic components.
 
 Try the image path with `cargo run --release --example image_board`.
 WASD/arrows move an image, Space changes its source region, Enter opens an
@@ -328,8 +341,8 @@ world.spawn(panel)?;
 
 The default allows 256 screen rectangles. World and screen scenes publish as
 one snapshot: a failure in either cannot publish half a new frame. Screen
-layers always follow World layers. Without images, nonempty screen rectangles
-use one extra pass and empty screen content uses none. Images can split that
+layers always follow World layers. Without images or text, nonempty screen rectangles
+use one extra pass and empty screen content uses none. Images and text can split that
 rectangle pass into ordered runs. These are presentation primitives, not text,
 buttons, mouse handling, or a layout tree.
 

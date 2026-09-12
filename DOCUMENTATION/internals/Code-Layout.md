@@ -12,6 +12,7 @@ available to users as `sim_logic::input`.
 | [application](../../src/application) | Application setup, input, time, resources, transitions, and the shared runner. |
 | [assets](../../src/assets) | Immutable CPU image registrations, opaque handles, and storage limits. |
 | [audio](../../src/audio) | Optional single-source device output, buffer policy, and diagnostics. |
+| [text](../../src/text) | Optional font registrations, single-line text values, metrics, and limits. |
 | [ecs](../../src/ecs) | Entity identity, queries, System registration, World construction, events, and Commands. |
 | [logic](../../src/logic) | Generic overlap geometry and opt-in movement helpers. |
 | [rendering](../../src/rendering) | Visual components, CPU extraction, and render limits. |
@@ -57,6 +58,13 @@ headless tests. Image registration lives in `assets`, the managed component
 in `rendering/screen`, and mixed draw-plan extraction in `rendering/extraction`.
 Only `platform/desktop/images.rs` owns the Engine GPU cache and presentation.
 Neither World factories nor the CPU registry need a renderer.
+
+The [text labels](../../examples/text_labels/scene.rs) use the same separation.
+`text` owns shared CPU font registrations and prepared labels;
+`rendering/extraction/text.rs` checks their provenance and publishes snapshots.
+`platform/desktop/text.rs` owns Engine atlases and retained GPU runs. The mixed
+screen compositor in `platform/desktop/images.rs` orders text, images, and
+rectangles together. Shaping and rasterization remain Engine responsibilities.
 
 The optional [`draw_crab`](../rendering/Screen-Images.md#ferris-easter-egg) helper and its small embedded PNG
 live in `rendering/easter_eggs`. It registers a normal image during setup and

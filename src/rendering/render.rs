@@ -166,6 +166,12 @@ pub struct RenderLimits {
     max_world_lines: usize,
     max_screen_rectangles: usize,
     max_screen_images: usize,
+    #[cfg(feature = "text")]
+    max_screen_texts: usize,
+    #[cfg(feature = "text")]
+    max_screen_text_bytes: usize,
+    #[cfg(feature = "text")]
+    max_screen_text_glyphs: usize,
     world_scene_budget: SceneBudget,
     screen_scene_budget: SceneBudget,
     frame_limits: FrameLimits,
@@ -190,6 +196,12 @@ impl RenderLimits {
             max_world_lines: DEFAULT_MAX_WORLD_LINES,
             max_screen_rectangles: DEFAULT_MAX_SCREEN_RECTANGLES,
             max_screen_images: 0,
+            #[cfg(feature = "text")]
+            max_screen_texts: 0,
+            #[cfg(feature = "text")]
+            max_screen_text_bytes: 0,
+            #[cfg(feature = "text")]
+            max_screen_text_glyphs: 0,
             world_scene_budget,
             screen_scene_budget: DEFAULT_SCREEN_SCENE_BUDGET,
             frame_limits,
@@ -223,6 +235,59 @@ impl RenderLimits {
     /// Returns the enabled screen-image count limit (zero by default).
     pub const fn max_screen_images(self) -> usize {
         self.max_screen_images
+    }
+
+    /// Returns the enabled screen-text source count limit, zero by default.
+    #[cfg(feature = "text")]
+    pub const fn max_screen_texts(self) -> usize {
+        self.max_screen_texts
+    }
+
+    /// Returns the aggregate UTF-8 byte allowance for one screen-text snapshot.
+    ///
+    /// Each enabled visual counts its complete string, even when several share
+    /// the same prepared text. This is a work limit, not a retained-memory cap.
+    #[cfg(feature = "text")]
+    pub const fn max_screen_text_bytes(self) -> usize {
+        self.max_screen_text_bytes
+    }
+
+    /// Returns the aggregate shaped-glyph allowance for screen text.
+    ///
+    /// Each enabled visual counts its prepared glyphs, including whitespace.
+    /// Multiple placements of one shared string each consume this allowance.
+    #[cfg(feature = "text")]
+    pub const fn max_screen_text_glyphs(self) -> usize {
+        self.max_screen_text_glyphs
+    }
+
+    /// Enables a bounded number of screen labels without changing other caps.
+    ///
+    /// Text is disabled by default. Also set the text byte and glyph allowances
+    /// and desktop frame limits for glyph draws and font-atlas texture storage.
+    #[cfg(feature = "text")]
+    pub const fn with_max_screen_texts(mut self, limit: usize) -> Self {
+        self.max_screen_texts = limit;
+        self
+    }
+
+    /// Replaces only the aggregate screen-text UTF-8 byte allowance.
+    ///
+    /// Zero permits empty strings only; text source and glyph caps still apply.
+    #[cfg(feature = "text")]
+    pub const fn with_max_screen_text_bytes(mut self, limit: usize) -> Self {
+        self.max_screen_text_bytes = limit;
+        self
+    }
+
+    /// Replaces only the aggregate screen-text shaped-glyph allowance.
+    ///
+    /// Zero permits labels with no shaped glyphs; it does not disable their
+    /// source count or UTF-8 byte checks.
+    #[cfg(feature = "text")]
+    pub const fn with_max_screen_text_glyphs(mut self, limit: usize) -> Self {
+        self.max_screen_text_glyphs = limit;
+        self
     }
 
     /// Returns opt-in object, triangle, and physical-target caps for real 3D.
