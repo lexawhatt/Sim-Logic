@@ -101,6 +101,14 @@ impl PointerSample {
         self.viewport
     }
 
+    pub(crate) fn is_inside_viewport(self) -> bool {
+        let point = self.position.to_vec2();
+        point.x() >= 0.0
+            && point.y() >= 0.0
+            && point.x() < self.viewport.width()
+            && point.y() < self.viewport.height()
+    }
+
     /// Converts this sample to the supplied camera's depth-zero world plane.
     ///
     /// This delegates exactly to [`Camera2d::screen_to_world`], preserving its

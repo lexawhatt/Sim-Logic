@@ -14,6 +14,8 @@ use sim_engine::SceneBudget;
 use sim_logic::bevy_ecs::entity_disabling::Disabled;
 use sim_logic::prelude::*;
 
+#[path = "headless_runtime/buttons.rs"]
+mod buttons;
 #[path = "headless_runtime/images.rs"]
 mod images;
 #[path = "headless_runtime/input_cancellation.rs"]
@@ -2961,6 +2963,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Sim;Logic input cancellation allocation gate");
         return input_cancellation::run_allocation_case();
     }
+    if std::env::args().any(|argument| argument == "--buttons-only") {
+        println!("Sim;Logic pointer-button routing allocation gate");
+        return buttons::run_allocation_case();
+    }
     if std::env::args().any(|argument| argument == "--world-build-only") {
         println!("Sim;Logic managed World-build benchmark");
         run_managed_idle_case()?;
@@ -3007,6 +3013,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_digital_motion_case()?;
     run_input_allocation_suite()?;
     input_cancellation::run_allocation_case()?;
+    buttons::run_allocation_case()?;
     run_managed_idle_case()?;
     run_spatial_build_case()?;
     run_command_suite()?;

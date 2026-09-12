@@ -23,7 +23,7 @@ a desktop example to testing the same application without a window.
 ## Drawing
 
 - [Screen panels](rendering/Screen-HUD.md): rectangles that stay in place
-  while the World camera moves.
+  while the World camera moves, geometric hit tests and explicit button ownership.
 - [Screen images](rendering/Screen-Images.md): assets, crop, tint, ordering,
   memory limits and the optional Ferris helper.
 - [Screen text](rendering/Text.md): optional real-font labels, alignment,
@@ -56,7 +56,7 @@ There is one active World and one desktop window. Systems run sequentially;
 World factories are synchronous and take no runtime payload. Behavior sugar,
 an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
-pointer input has no UI focus or capture, audio is not a World-owned voice service,
+pointer buttons have no global focus or OS capture, audio is not a World-owned voice service,
 and 3D does not yet load arbitrary models.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been

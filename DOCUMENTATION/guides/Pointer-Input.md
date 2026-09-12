@@ -248,6 +248,9 @@ physical control and cancellation reason. Downstream exhaustive matches on
 `InputCollectionError::FrameEdgeLimitExceeded` and, with desktop enabled,
 `DesktopRunError::Pointer`.
 
-This slice has no pointer capture, wheel, touch, pen, text entry, UI focus, or
-built-in hit testing. Drawing a `ScreenRectangleVisual` does not make it
-capture mouse input.
+For explicit press/release ownership, use the small
+[pointer-button helper](../rendering/Screen-HUD.md#buttons-and-local-input-ownership).
+It uses these source/cancellation fields and caller-selected rectangle hits.
+It does not consume these snapshots or add an OS pointer grab. Wheel, touch,
+pen, text entry and UI keyboard focus are not implemented. Drawing a
+`ScreenRectangleVisual` alone still does not capture input.

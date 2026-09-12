@@ -37,6 +37,7 @@ examples cover individual features or combine them into a small game:
 | `screen_hud` | A screen-fixed status panel that keeps updating during pause. |
 | `click_to_place` | Placing bounded objects from click-time pointer coordinates. |
 | `input_cancellation` | Headless inspection of physical controls and cancelled releases; run with `--no-default-features`. |
+| `ui_buttons` | Buttons, text labels, pause, disabled targets, background clicks and two-way World replacement; add `--features text`. |
 | [image_board](rendering/Screen-Images.md) | Shared immutable image pixels, cropping, filtering, tint, and mixed panel/image order. |
 | [iron_maze](examples/Iron-Maze.md) | A playable 2.5D shooter with fixed game rules, a screen-rectangle view, and level restart. |
 | [territory_wars](examples/Territory-Wars.md) | Island conquest against six bots, independent economic/combat rules, and an opt-in debug/cheat panel. |

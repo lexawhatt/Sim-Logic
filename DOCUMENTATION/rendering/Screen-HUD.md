@@ -137,11 +137,87 @@ snapshot is published. Headless code can inspect
 `ExtractedFrame::resolved_screen_rectangles()` and should check its World
 generation as it would for any other snapshot.
 
+## Buttons and local input ownership
+
+`ScreenRectangleVisual::contains_pointer(sample)` checks its rectangle against
+the sample's stored viewport. Left/top edges are included, right/bottom edges
+excluded. An offscreen rectangle can be hit only in the visible part of that
+viewport. This is geometry only: even a transparent rectangle can pass this
+check. Your application chooses which entities are enabled, eligible and on
+top. The rectangle is its current layout, not a saved event-time layout.
+
+`PointerButton<T>` in `sim_logic::ui` tracks one physical mouse button and one
+pressed target. `T` can be a small application enum or a generation-qualified
+`LogicEntity`. Construct it with `PointerButton::new(MouseButton::Left)` and
+feed the complete `FrameInput::edges()` stream once, in order:
+
+```rust,ignore
+for edge in input.edges() {
+    // Pick the top eligible target at edge.pointer(), not input.pointer().
+    let hit = pick_eligible_button(edge.pointer());
+    let result = button.process(edge, hit);
+    if let Some(PointerButtonEvent::Clicked { target, intent, .. }) = result.event() {
+        // Apply the target's action; a World transition can use this release token.
+    }
+    if !result.claimed() {
+        // This central router may forward the edge to application/game controls.
+    }
+}
+```
+
+A known press inside captures the target. An ordinary release over that same
+eligible target produces `Clicked`; release elsewhere, unknown coordinates or
+focus/pointer cancellation never confirms it. Pressing outside and releasing
+inside does not click. Keyboard aliases and other mouse buttons leave capture
+alone. `captured()` exposes the pressed target for styling; it is not hover.
+
+Call `cancel()` as soon as a captured target is removed, disabled, or hidden
+behind a modal. It returns that target for your cleanup and claims the rest of
+the hold until release, so an invalidated UI gesture cannot become a game
+gesture. Such suppressed edges can be claimed without producing an event.
+Reintroducing the same target value does not restore its old capture.
+
+This helper does not consume the shared input snapshots. Route competing
+actions together, and do not separately process the same physical action in
+another game System. FixedUpdate runs before FrameUpdate: UI decisions made in
+FrameUpdate cannot undo earlier game actions. For fixed simulation, queue only
+the accepted game intents for a later tick; do not feed this controller both
+frame and fixed copies. Replaying a complete pair can produce another click.
+Those queued intents are your application's ordinary data or commands. Saving
+a `PointerButtonEvent` does not extend its transition token's runtime lifetime.
+
+Keep controllers in World-local Resources that are rebuilt on replacement.
+An application-owned controller needs explicit cancellation when targets change
+worlds, generation-qualified IDs, and continued delivery of release events.
+Saving a controller inside an inactive game region can miss releases. Persist
+game data between regions, not unfinished UI interactions.
+
+Run the [ui_buttons example](../../examples/ui_buttons/main.rs):
+
+```bash
+cargo run --release --features text --example ui_buttons
+```
+
+It routes UI and background input together in FrameUpdate. COUNT increments
+an application-owned counter; PAUSE stops fixed updates, not the UI; ENABLE/
+DISABLE COUNT changes eligibility; NEXT WORLD performs a real replacement and
+keeps shared counters. Press D while holding COUNT to test invalidation. Click
+the lower play area to place marks; a UI press never also places a mark.
+The example uses the optional managed text feature and the existing licensed
+font fixture. Labels change only when their displayed value changes.
+It draws 7 screen rectangles and 28 text labels, with two shared fonts; fixed
+time is displayed as whole seconds. The layout is fixed at logical 1000x700
+and clips on smaller windows. After replacement, inherited counter labels show
+`...` until the first following FrameUpdate: isolated factories cannot read
+live Application Resources. The counters themselves survive immediately.
+
 ## What this does not provide
 
-There are no rounded screen rectangles, text or font loading, UI buttons,
-hit testing, UI focus, nested layouts, or clipping trees yet.
-[Pointer input](../guides/Pointer-Input.md) is available, but drawing a rectangle does
-not make it capture input. It belongs to the active
+There are no rounded screen rectangles, automatic widget layouts, keyboard
+focus navigation, text editing, OS pointer grabs, or clipping trees here.
+[Optional font-backed labels](Text.md) are a separate drawing capability.
+The button helper owns a local press/release sequence, not drag-motion sampling
+or automatic global input routing. Drawing a rectangle alone does not make it
+capture input. It belongs to the active
 World and disappears on World replacement; it is not an application-owned
 error overlay.

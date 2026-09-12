@@ -100,6 +100,11 @@ required-features = ["desktop", "text"]
 name = "input_cancellation"
 path = "examples/input_cancellation/main.rs"
 
+[[example]]
+name = "ui_buttons"
+path = "examples/ui_buttons/main.rs"
+required-features = ["desktop", "text"]
+
 [[bench]]
 name = "headless_runtime"
 harness = false

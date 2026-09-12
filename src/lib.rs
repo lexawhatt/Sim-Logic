@@ -56,6 +56,7 @@ pub mod three_d;
 pub mod time;
 #[path = "application/transition.rs"]
 pub mod transition;
+pub mod ui;
 #[path = "rendering/visual.rs"]
 pub mod visual;
 #[path = "ecs/world.rs"]
@@ -155,6 +156,9 @@ pub mod prelude {
     };
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;
+    pub use crate::ui::{
+        PointerButton, PointerButtonCancellation, PointerButtonEvent, PointerButtonOutcome,
+    };
     pub use crate::visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, VisualValueError,
         WorldBackground,

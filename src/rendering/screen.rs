@@ -5,6 +5,8 @@ use std::{error::Error, fmt};
 use bevy_ecs::prelude::Component;
 use sim_engine::{Color, Layer, LogicalScreenPosition, LogicalScreenVector};
 
+use crate::input::PointerSample;
+
 #[path = "screen/image.rs"]
 mod image;
 pub use image::{ImageFilter, ImageRegion, ImageVisualError, ScreenImageVisual};
@@ -21,7 +23,7 @@ pub use image::{ImageFilter, ImageRegion, ImageVisualError, ScreenImageVisual};
 /// samples its current values, excludes disabled entities, and draws screen
 /// rectangles after all world visuals. Within screen content, lower layer and
 /// draw-order depth draw first; stable source identity breaks remaining ties.
-/// Visibility does not capture input or provide hit testing. No window or GPU
+/// Visibility does not automatically capture or route input. No window or GPU
 /// is required to construct, update, or extract the component.
 #[derive(Debug, Clone, Copy, PartialEq, Component)]
 pub struct ScreenRectangleVisual {
@@ -62,6 +64,29 @@ impl ScreenRectangleVisual {
     /// Returns the full positive width and height in logical screen pixels.
     pub const fn size(&self) -> LogicalScreenVector {
         self.size
+    }
+
+    /// Tests the current rectangular geometry against an event-time pointer.
+    ///
+    /// Both the rectangle and the sample's stored viewport use half-open bounds:
+    /// left/top edges are included, right/bottom excluded. Partially offscreen
+    /// rectangles can be hit only inside that viewport. The supplied geometry
+    /// is current; this does not reconstruct historical layout after a resize.
+    ///
+    /// This is allocation-free geometry, not automatic UI routing. Alpha, entity
+    /// enablement, overlapping draw order and nested clipping are not inspected.
+    /// The caller chooses eligibility and which overlapping target wins.
+    pub fn contains_pointer(&self, sample: PointerSample) -> bool {
+        if !sample.is_inside_viewport() {
+            return false;
+        }
+        let point = sample.position().to_vec2();
+        let minimum = self.position.to_vec2();
+        let maximum = minimum + self.size.to_vec2();
+        point.x() >= minimum.x()
+            && point.y() >= minimum.y()
+            && point.x() < maximum.x()
+            && point.y() < maximum.y()
     }
 
     /// Returns the normalized straight-linear RGBA fill color.

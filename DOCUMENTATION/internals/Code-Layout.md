@@ -13,6 +13,7 @@ available to users as `sim_logic::input`.
 | [assets](../../src/assets) | Immutable CPU image registrations, opaque handles, and storage limits. |
 | [audio](../../src/audio) | Optional single-source device output, buffer policy, and diagnostics. |
 | [text](../../src/text) | Optional font registrations, single-line text values, metrics, and limits. |
+| [ui](../../src/ui) | Caller-driven pointer-button ownership; no renderer or global input consumption. |
 | [ecs](../../src/ecs) | Entity identity, queries, System registration, World construction, events, and Commands. |
 | [logic](../../src/logic) | Generic overlap geometry and opt-in movement helpers. |
 | [rendering](../../src/rendering) | Visual components, CPU extraction, and render limits. |

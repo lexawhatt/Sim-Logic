@@ -84,6 +84,9 @@ The first experimental slice can:
   samples and explicit screen-to-world coordinate conversion;
 - keep each input edge's physical key or mouse button, and distinguish an
   ordinary release from cancellation on pointer leave or focus loss;
+- track an explicitly routed mouse-button gesture, confirm only eligible
+  press/release pairs, and suppress invalidated UI holds without leaking them
+  into a competing game handler;
 - find live same-shape overlaps among typed circular colliders and among
   axis-aligned rectangular colliders;
 - optionally integrate finite `LinearVelocity2d` components during fixed
@@ -131,6 +134,10 @@ Inspect input sources and cancellation without a window using
 `cargo run --no-default-features --example input_cancellation`. The
 [input guide](DOCUMENTATION/guides/Pointer-Input.md) explains why a cancelled
 release must not confirm a click or drag.
+
+Try `cargo run --release --features text --example ui_buttons` for buttons, pause, disabled
+targets and two-way World replacement. The [panel guide](DOCUMENTATION/rendering/Screen-HUD.md#buttons-and-local-input-ownership)
+explains the small button helper and the explicit UI/gameplay routing boundary.
 
 Try the image path with `cargo run --release --example image_board`.
 WASD/arrows move an image, Space changes its source region, Enter opens an
@@ -350,8 +357,9 @@ The default allows 256 screen rectangles. World and screen scenes publish as
 one snapshot: a failure in either cannot publish half a new frame. Screen
 layers always follow World layers. Without images or text, nonempty screen rectangles
 use one extra pass and empty screen content uses none. Images and text can split that
-rectangle pass into ordered runs. These are presentation primitives, not text,
-buttons, mouse handling, or a layout tree.
+rectangle pass into ordered runs. These are presentation primitives; drawing
+one does not automatically create a button or a layout tree. Explicit hit tests
+and `PointerButton` ownership are described in the panel guide below.
 
 Run `cargo run --release --example screen_hud` to see a moving World with a
 fixed status panel and progress bar. Space pauses/resumes; the activity
@@ -1006,12 +1014,17 @@ cargo bench --bench headless_runtime --no-default-features -- --enablement-only
 cargo bench --bench headless_runtime --no-default-features -- --exit-only
 cargo bench --bench headless_runtime --no-default-features -- --pointer-only
 cargo bench --bench headless_runtime --no-default-features -- --input-cancellation-only
+cargo bench --bench headless_runtime --no-default-features -- --buttons-only
 ```
 
 The cancellation gate checks source, pointer, cause, and token identity across
 frame delivery and delayed fixed ticks. After warm-up it requires zero allocator
 calls across 100 frames alternating pointer leave and focus loss. This is a
 headless CPU check, not a measurement of desktop event delivery or GPU work.
+
+The buttons gate routes UI and background gestures through an actual headless
+frame while paused. It verifies presses, clicks, focus cancellation, explicit
+invalidation and suppressed releases, and requires zero warmed allocator calls.
 
 It reports World build and steady-state frame time for 0, 100, 1,000, and
 10,000 circles, plus managed-idle scale, balanced entity churn, and typed event
