@@ -4,9 +4,9 @@ use sim_engine::{Color, Transform3d};
 
 use crate::identity::{LogicEntity, WorldGeneration};
 
-use super::{CuboidVisual3d, CuboidVisualError, View3d, View3dError};
+use super::{CuboidVisual3d, CuboidVisualError, MeshSource, ResolvedMesh3d, View3d, View3dError};
 
-/// Frozen opt-in limits for CPU cuboids and the separate desktop depth prepass.
+/// Frozen opt-in limits for opaque geometry and the separate desktop depth prepass.
 ///
 /// Defaults are all zero. Every visible cuboid consumes twelve triangles and
 /// at most twenty-four edge segments when both wireframe modes are selected.
@@ -18,6 +18,8 @@ pub struct ThreeDRenderLimits {
     max_cuboids: usize,
     max_triangles: usize,
     max_target_pixels: u64,
+    max_meshes: usize,
+    max_mesh_source_bytes: usize,
 }
 
 impl ThreeDRenderLimits {
@@ -27,6 +29,8 @@ impl ThreeDRenderLimits {
             max_cuboids,
             max_triangles,
             max_target_pixels,
+            max_meshes: 0,
+            max_mesh_source_bytes: 0,
         }
     }
 
@@ -44,6 +48,28 @@ impl ThreeDRenderLimits {
     pub const fn max_target_pixels(self) -> u64 {
         self.max_target_pixels
     }
+
+    /// Enables opaque custom meshes with inclusive instance and CPU-source caps.
+    ///
+    /// Source capacities are conservatively charged once per visible instance,
+    /// even when instances share an asset. Triangle limits include both cuboids
+    /// and custom meshes. Hidden/disabled meshes consume none of these limits.
+    /// Engine's additional finite GPU/upload/scene-memory limits still apply.
+    pub const fn with_mesh_limits(mut self, max_meshes: usize, max_source_bytes: usize) -> Self {
+        self.max_meshes = max_meshes;
+        self.max_mesh_source_bytes = max_source_bytes;
+        self
+    }
+
+    /// Returns the maximum visible custom-mesh instance count.
+    pub const fn max_meshes(self) -> usize {
+        self.max_meshes
+    }
+
+    /// Returns the summed per-instance topology-capacity allowance.
+    pub const fn max_mesh_source_bytes(self) -> usize {
+        self.max_mesh_source_bytes
+    }
 }
 
 /// Identifies which independent 3D work limit was exceeded.
@@ -51,7 +77,11 @@ impl ThreeDRenderLimits {
 pub enum ThreeDLimitResource {
     /// Visible extracted cuboids and retained desktop scene slots.
     Cuboids,
-    /// Twelve filled triangles per visible cuboid.
+    /// Visible custom-mesh instances.
+    Meshes,
+    /// CPU topology capacities charged once per visible custom-mesh instance.
+    MeshSourceBytes,
+    /// Filled surface triangles from cuboids and custom meshes.
     Triangles,
     /// Physical pixels in the color/depth target pair.
     TargetPixels,
@@ -88,12 +118,13 @@ impl ResolvedCuboid3d {
 
 /// Borrowed complete enabled 3D view from a published CPU frame.
 ///
-/// A view may be enabled with no cuboids, in which case its background still
+/// A view may be enabled with no objects, in which case its background still
 /// renders. Missing or disabled views have no snapshot and require no prepass.
 #[derive(Debug, Clone, Copy)]
 pub struct ThreeDSnapshot<'a> {
     view: View3d,
     cuboids: &'a [ResolvedCuboid3d],
+    meshes: &'a [ResolvedMesh3d],
 }
 
 impl<'a> ThreeDSnapshot<'a> {
@@ -102,9 +133,23 @@ impl<'a> ThreeDSnapshot<'a> {
         self.view
     }
 
-    /// Returns visible cuboids in stable managed-identity submission order.
+    /// Returns visible cuboids in stable managed-identity extraction order.
     pub const fn cuboids(self) -> &'a [ResolvedCuboid3d] {
         self.cuboids
+    }
+
+    /// Returns opaque meshes in stable managed-identity extraction order.
+    pub const fn meshes(self) -> &'a [ResolvedMesh3d] {
+        self.meshes
+    }
+
+    /// Returns original surface triangles before Engine's view-dependent clipping.
+    pub fn source_triangle_count(self) -> usize {
+        self.meshes
+            .iter()
+            .fold(self.cuboids.len().saturating_mul(12), |sum, mesh| {
+                sum.saturating_add(mesh.visual().asset().mesh().triangle_count())
+            })
     }
 }
 
@@ -126,6 +171,7 @@ impl CuboidSource {
 pub(crate) struct ThreeDExtractionBuffer {
     view: Option<View3d>,
     resolved: Vec<ResolvedCuboid3d>,
+    pub(super) meshes: Vec<ResolvedMesh3d>,
 }
 
 impl ThreeDExtractionBuffer {
@@ -133,12 +179,14 @@ impl ThreeDExtractionBuffer {
         Self {
             view: None,
             resolved: Vec::new(),
+            meshes: Vec::new(),
         }
     }
 
     pub(crate) fn clear(&mut self) {
         self.view = None;
         self.resolved.clear();
+        self.meshes.clear();
     }
 
     pub(crate) fn extract(
@@ -205,15 +253,38 @@ impl ThreeDExtractionBuffer {
         self.view.map(|view| ThreeDSnapshot {
             view,
             cuboids: &self.resolved,
+            meshes: &self.meshes,
         })
     }
 
     pub(crate) fn resolved(&self) -> &[ResolvedCuboid3d] {
         &self.resolved
     }
+
+    pub(crate) fn extract_meshes(
+        &mut self,
+        generation: WorldGeneration,
+        limits: ThreeDRenderLimits,
+        sources: impl IntoIterator<Item = MeshSource>,
+    ) -> Result<(), ThreeDExtractionError> {
+        if self.view.is_none() {
+            return Ok(());
+        }
+        if let Err(error) = super::mesh_extraction::extract_meshes(
+            &mut self.meshes,
+            generation,
+            limits,
+            self.resolved.len().saturating_mul(12),
+            sources,
+        ) {
+            self.view = None;
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
-fn check_limit(
+pub(super) fn check_limit(
     resource: ThreeDLimitResource,
     requested: usize,
     limit: usize,

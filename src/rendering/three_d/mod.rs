@@ -1,13 +1,15 @@
-//! Opt-in, bounded opaque cuboids with real depth-buffered desktop rendering.
+//! Opt-in, bounded opaque cuboids and host-built surface meshes.
 //!
 //! These presentation values require no window or GPU. They are sampled
 //! directly during extraction, without fixed-step interpolation. The desktop
-//! bridge uses one immutable unit-cube mesh and composes an opaque 3D target
+//! bridge retains immutable topology and composes a real depth-buffered 3D target
 //! above the 2D world and below every screen overlay. Sim;Engine 0.3 clips filled
 //! triangles against the view frustum within explicit topology budgets. The
 //! desktop bridge attributes object-specific failures to the source entity.
 
 mod extraction;
+mod mesh;
+mod mesh_extraction;
 mod view;
 mod visual;
 
@@ -16,6 +18,9 @@ pub use extraction::{
     ResolvedCuboid3d, ThreeDExtractionError, ThreeDLimitResource, ThreeDRenderLimits,
     ThreeDSnapshot,
 };
+pub use mesh::{MeshAsset3d, MeshVisual3d, MeshVisualError};
+pub(crate) use mesh_extraction::MeshSource;
+pub use mesh_extraction::ResolvedMesh3d;
 pub use view::{View3d, View3dError};
 pub use visual::{CuboidVisual3d, CuboidVisualError};
 

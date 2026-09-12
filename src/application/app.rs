@@ -389,6 +389,9 @@ impl<A: Action> Application<A> {
             .approve::<CuboidVisual3d>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
+            .approve::<crate::three_d::MeshVisual3d>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
+        components
             .approve::<ActiveCamera2d>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components

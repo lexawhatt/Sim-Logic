@@ -14,8 +14,8 @@ use super::{CORNERS, TRIANGLES};
 ///
 /// Size is the full extent along local axes, before rotation. There is no
 /// physics, lighting, interpolation, mesh import, or screen-layer sorting.
-/// Hardware depth resolves overlap; stable managed identity resolves submission
-/// order. FrameUpdate may change this presentation component. Hidden cuboids
+/// Hardware depth resolves overlap; stable managed identity orders CPU records.
+/// FrameUpdate may change this presentation component. Hidden cuboids
 /// and disabled entities consume no extracted 3D object or triangle budget.
 #[derive(Debug, Clone, Copy, PartialEq, Component)]
 pub struct CuboidVisual3d {

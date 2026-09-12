@@ -6,8 +6,8 @@ use crate::{
     render::RenderLimits,
     screen::{ImageVisualError, ScreenVisualError},
     three_d::{
-        CuboidSource, ResolvedCuboid3d, ThreeDExtractionBuffer, ThreeDExtractionError,
-        ThreeDRenderLimits, ThreeDSnapshot, View3d,
+        CuboidSource, MeshSource, ResolvedCuboid3d, ResolvedMesh3d, ThreeDExtractionBuffer,
+        ThreeDExtractionError, ThreeDRenderLimits, ThreeDSnapshot, View3d,
     },
     visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, VisualValueError,
@@ -310,6 +310,15 @@ impl ExtractedFrame {
         self.storage.three_d.resolved()
     }
 
+    /// Returns current visible custom meshes in stable managed-identity order.
+    /// Missing or disabled View3d resources produce an empty slice.
+    pub fn resolved_meshes(&self) -> &[ResolvedMesh3d] {
+        self.storage
+            .three_d
+            .snapshot()
+            .map_or(&[], |snapshot| snapshot.meshes())
+    }
+
     /// Returns the exact screen composition after the world scene.
     ///
     /// Contiguous rectangle runs, images, and optional text share layer, depth,
@@ -449,6 +458,7 @@ impl ExtractionBuffers {
         limits: ThreeDRenderLimits,
         view: Option<View3d>,
         sources: impl IntoIterator<Item = CuboidSource>,
+        meshes: impl IntoIterator<Item = MeshSource>,
     ) -> Result<(), ExtractionError> {
         let Some(metadata) = self.staged.take() else {
             return Err(ExtractionError::MissingStagedFrame);
@@ -459,6 +469,10 @@ impl ExtractionBuffers {
         spare
             .three_d
             .extract(generation, limits, view, sources)
+            .map_err(ExtractionError::ThreeD)?;
+        spare
+            .three_d
+            .extract_meshes(generation, limits, meshes)
             .map_err(ExtractionError::ThreeD)?;
         self.staged = Some(metadata);
         Ok(())

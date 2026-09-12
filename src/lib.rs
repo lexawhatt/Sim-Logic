@@ -151,8 +151,9 @@ pub mod prelude {
         ScreenTextVisual, TextAlignment, TextError, TextFont, TextLimits, TextMetrics, TextSettings,
     };
     pub use crate::three_d::{
-        CuboidVisual3d, CuboidVisualError, ResolvedCuboid3d, ThreeDExtractionError,
-        ThreeDLimitResource, ThreeDRenderLimits, ThreeDSnapshot, View3d, View3dError,
+        CuboidVisual3d, CuboidVisualError, MeshAsset3d, MeshVisual3d, MeshVisualError,
+        ResolvedCuboid3d, ResolvedMesh3d, ThreeDExtractionError, ThreeDLimitResource,
+        ThreeDRenderLimits, ThreeDSnapshot, View3d, View3dError,
     };
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;

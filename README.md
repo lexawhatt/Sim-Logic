@@ -14,6 +14,25 @@ State remains explicit Rust data, and behavior remains explicit Rust systems.
 Start with the [documentation](DOCUMENTATION/README.md) for a runnable
 headless example and a plain-language explanation of the runtime.
 
+## Build in Twin Fields
+
+A small voxel sandbox with two regions, block building, collision, a hotbar
+and save/load. Your edits and inventory survive travel between Worlds:
+
+Experimental: Engine 0.3.0 rejects some camera angles with
+`UnportableSurfaceTopology`; this can close the window. Save before exploring.
+The [game guide](DOCUMENTATION/examples/Voxel-Sandbox.md#renderer-limitation) describes
+the confirmed blocker. This is not yet a reliable free-camera release.
+
+```bash
+cargo run --release --features text --example voxel_sandbox
+```
+
+WASD moves, arrows or middle-drag look, Space jumps. Left click breaks the
+target block; right click places it. N travels, P pauses, and F5/F9 save/load.
+See the [Twin Fields guide](DOCUMENTATION/examples/Voxel-Sandbox.md) for all
+controls and the distinction between game rules, Logic and Engine rendering.
+
 ## Play Frontier
 
 Conquer a seeded island against six bots in an offline territory game:
@@ -114,7 +133,7 @@ The first experimental slice can:
   regions, tint, filtering, and shared rectangle/image ordering;
 - register fonts and draw optional single-line screen text with alignment,
   changing content, tint, and shared text/image/rectangle ordering;
-- extract opt-in colored cuboids and a current-value 3D view, with retained
+- extract opt-in colored cuboids, host-built opaque meshes and a current-value 3D view, with retained
   desktop geometry, bounded camera-plane clipping, a depth target, and screen
   overlays; object-local preflight errors preserve the current managed entity;
 - optionally send one application-owned mono PCM source to an audio device,
@@ -123,12 +142,12 @@ The first experimental slice can:
 
 This is not a finished general-purpose engine. Generic transition payloads,
 asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit,
-arbitrary 3D assets, a World-scoped audio service, and parallel
+3D model import, a World-scoped audio service, and parallel
 schedules are deliberately not public yet. The [audio output](DOCUMENTATION/guides/Audio-Output.md)
 adapter is optional, immediate and independent of World transactions; it is
 not a full sound engine. The [3D bridge](DOCUMENTATION/rendering/ThreeD.md) currently
-supports cuboids, not arbitrary meshes, lighting or materials. Engine 0.3's
-additional mesh and texture capabilities are not yet managed Logic components.
+supports cuboids and immutable host-built opaque meshes, not textured materials
+or lighting. Its errors retain Engine's strict portability checks.
 
 Inspect input sources and cancellation without a window using
 `cargo run --no-default-features --example input_cancellation`. The

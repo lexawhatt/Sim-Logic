@@ -28,10 +28,11 @@ a desktop example to testing the same application without a window.
   memory limits and the optional Ferris helper.
 - [Screen text](rendering/Text.md): optional real-font labels, alignment,
   changing strings, limits and shared rendering caches.
-- [Geometric 3D](rendering/ThreeD.md): cuboids, depth and switching views.
+- [Geometric 3D](rendering/ThreeD.md): cuboids, host-built meshes, depth and switching views.
 
 ## Example applications
 
+- [Twin Fields](examples/Voxel-Sandbox.md): a voxel building sandbox with two persistent regions.
 - [Frontier](examples/Territory-Wars.md): territory conquest, bots, separate game rules, and a mechanics inspector.
 - [Iron Maze](examples/Iron-Maze.md): a small 2.5D shooter.
 - [Piano roll](examples/Piano-Roll.md): editing, synthesized sound and a 2D/3D piano.
@@ -57,7 +58,7 @@ World factories are synchronous and take no runtime payload. Behavior sugar,
 an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
 pointer buttons have no global focus or OS capture, audio is not a World-owned voice service,
-and 3D does not yet load arbitrary models.
+and 3D accepts host-built opaque meshes but supplies no model-file importer.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been
 checked on Linux/Vulkan, not every platform. For the product overview and

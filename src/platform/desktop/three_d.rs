@@ -12,10 +12,14 @@ use sim_engine::{
 use crate::{
     identity::LogicEntity,
     three_d::{
-        CORNERS, CuboidVisualError, TRIANGLES, ThreeDLimitResource, ThreeDRenderLimits,
-        ThreeDSnapshot, View3dError,
+        CORNERS, CuboidVisualError, MeshVisualError, TRIANGLES, ThreeDLimitResource,
+        ThreeDRenderLimits, ThreeDSnapshot, View3dError,
     },
 };
+
+#[path = "three_d/meshes.rs"]
+mod meshes;
+use meshes::CustomMeshes;
 
 /// A bounded 3D preparation or separate depth-prepass failure.
 ///
@@ -57,14 +61,21 @@ pub enum DesktopThreeDError {
         /// Concrete value error.
         error: CuboidVisualError,
     },
-    /// A managed cuboid could not be inserted or updated in the retained scene.
+    /// A custom mesh's validated value could not form its GPU style.
+    CustomMesh {
+        /// Source requesting the failed value.
+        source: LogicEntity,
+        /// Concrete value error.
+        error: MeshVisualError,
+    },
+    /// A managed 3D object could not be inserted or updated in the retained scene.
     Object {
         /// Source requesting the failed scene update.
         source: LogicEntity,
         /// Concrete scene failure.
         error: Scene3dError,
     },
-    /// Engine's authoritative preflight rejected one managed cuboid.
+    /// Engine's authoritative preflight rejected one managed 3D object.
     ObjectRender {
         /// Current managed source occupying the retained Engine slot.
         source: LogicEntity,
@@ -106,13 +117,16 @@ impl fmt::Display for DesktopThreeDError {
             Self::Cuboid { source, error } => {
                 write!(formatter, "3D cuboid {source:?} style failed: {error}")
             }
+            Self::CustomMesh { source, error } => {
+                write!(formatter, "3D mesh {source:?} style failed: {error}")
+            }
             Self::Object { source, error } => write!(
                 formatter,
-                "3D cuboid {source:?} scene update failed: {error}"
+                "3D object {source:?} scene update failed: {error}"
             ),
             Self::ObjectRender { source, error } => write!(
                 formatter,
-                "3D cuboid {source:?} depth prepass failed: {error}"
+                "3D object {source:?} depth prepass failed: {error}"
             ),
             Self::Render(error) => write!(formatter, "3D depth prepass failed: {error}"),
             Self::InvalidCache => formatter.write_str("retained 3D cache is inconsistent"),
@@ -132,6 +146,7 @@ impl Error for DesktopThreeDError {
             Self::Resource(error) => Some(error),
             Self::Scene(error) => Some(error),
             Self::Cuboid { error, .. } => Some(error),
+            Self::CustomMesh { error, .. } => Some(error),
             Self::Object { error, .. } => Some(error),
             Self::ObjectRender { error, .. } => Some(error),
             Self::Render(error) => Some(error),
@@ -144,6 +159,7 @@ pub(super) struct DesktopThreeD {
     mesh: Option<RetainedMesh3d>,
     scene: Option<Scene3d>,
     slots: Vec<SceneSlot>,
+    custom: CustomMeshes,
     target: TargetCache<RenderTarget3d>,
 }
 
@@ -153,6 +169,7 @@ impl DesktopThreeD {
             mesh: None,
             scene: None,
             slots: Vec::new(),
+            custom: CustomMeshes::new(),
             target: TargetCache::new(),
         }
     }
@@ -162,6 +179,7 @@ impl DesktopThreeD {
         self.mesh = None;
         self.scene = None;
         self.slots.clear();
+        self.custom.clear();
         self.target.clear();
     }
 
@@ -177,7 +195,7 @@ impl DesktopThreeD {
     ) -> Result<Mesh3dRenderReport, DesktopThreeDError> {
         let (width, height) = renderer.size();
         check_limits(snapshot.cuboids().len(), width, height, limits)?;
-        let render_budget = engine_render_budget(snapshot.cuboids().len(), limits);
+        let render_budget = snapshot_render_budget(snapshot, limits);
         let viewport = renderer
             .logical_viewport()
             .map_err(DesktopThreeDError::Viewport)?;
@@ -205,6 +223,7 @@ impl DesktopThreeD {
             self.scene = Some(scene);
             // New scene IDs also invalidate every last-applied field together.
             self.slots.clear();
+            self.custom.clear_slots();
         }
         let scene = self
             .scene
@@ -252,6 +271,8 @@ impl DesktopThreeD {
             slot.update(scene, hidden)
                 .map_err(DesktopThreeDError::Scene)?;
         }
+        self.custom
+            .prepare(renderer, scene, snapshot.meshes(), limits, mesh)?;
         let descriptor = TargetDescriptor {
             width,
             height,
@@ -271,7 +292,16 @@ impl DesktopThreeD {
         let target = self.target.get().ok_or(DesktopThreeDError::InvalidCache)?;
         renderer
             .render_scene3d_to_target_with_budget(target, scene, camera, render_budget)
-            .map_err(|error| map_render_error(error, &self.slots))
+            .map_err(|error| {
+                if let Some(source) = error
+                    .object_id()
+                    .and_then(|id| find_object_source(id, self.custom.object_sources()))
+                {
+                    DesktopThreeDError::ObjectRender { source, error }
+                } else {
+                    map_render_error(error, &self.slots)
+                }
+            })
     }
 }
 
@@ -369,7 +399,10 @@ fn engine_scene_budget(limits: ThreeDRenderLimits) -> Result<Scene3dBudget, Desk
     // Keep finite Engine memory ceilings; this bridge owns one shared cube and
     // no textured meshes. Larger author object limits cannot bypass byte caps.
     Scene3dBudget::new(
-        limits.max_cuboids().max(1),
+        limits
+            .max_cuboids()
+            .saturating_add(limits.max_meshes())
+            .max(1),
         defaults.max_storage_bytes(),
         defaults.max_mesh_cpu_bytes(),
         defaults.max_mesh_gpu_bytes(),
@@ -378,6 +411,7 @@ fn engine_scene_budget(limits: ThreeDRenderLimits) -> Result<Scene3dBudget, Desk
     .map_err(DesktopThreeDError::Scene)
 }
 
+#[cfg(test)]
 fn engine_render_budget(count: usize, limits: ThreeDRenderLimits) -> Mesh3dRenderBudget {
     // Engine caps generated topology, while Logic caps all submitted triangles.
     // Every crossing object replaces its entire 12-triangle cube with generated
@@ -387,8 +421,38 @@ fn engine_render_budget(count: usize, limits: ThreeDRenderLimits) -> Mesh3dRende
     // not expose the retained/total submitted triangle count needed to relax it.
     // Saturation fails closed even for arithmetic beyond a valid count check.
     let retained_triangles = count.saturating_sub(1).saturating_mul(12);
+    generated_budget(retained_triangles, count != 0, limits)
+}
+
+fn snapshot_render_budget(
+    snapshot: ThreeDSnapshot<'_>,
+    limits: ThreeDRenderLimits,
+) -> Mesh3dRenderBudget {
+    let minimum = snapshot
+        .meshes()
+        .iter()
+        .map(|mesh| mesh.visual().asset().mesh().triangle_count())
+        .chain((!snapshot.cuboids().is_empty()).then_some(12))
+        .min();
+    // If any object crosses, at least the smallest object's retained topology
+    // is replaced by generated geometry. Reserve all other source triangles.
+    // This conservative cap includes mixed cuboids and arbitrary chunk sizes.
+    generated_budget(
+        snapshot
+            .source_triangle_count()
+            .saturating_sub(minimum.unwrap_or(0)),
+        minimum.is_some(),
+        limits,
+    )
+}
+
+fn generated_budget(
+    retained_triangles: usize,
+    has_objects: bool,
+    limits: ThreeDRenderLimits,
+) -> Mesh3dRenderBudget {
     let defaults = Mesh3dRenderBudget::default();
-    let triangles = if count == 0 {
+    let triangles = if !has_objects {
         0
     } else {
         limits

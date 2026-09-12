@@ -741,6 +741,14 @@ impl<A: Action> DesktopHost<A> {
             return;
         };
         self.report.last_three_d_frame = None;
+        if extracted.three_d().is_none() {
+            // A World with no active 3D view must not keep a retired World's
+            // chunk revisions alive through renderer caches.
+            if self.three_d.color_target().is_some() {
+                renderer.clear_frame_cache();
+            }
+            self.three_d.clear();
+        }
         let presentation = if let Some(snapshot) = extracted.three_d() {
             (|| {
                 self.images.preflight_three_d(

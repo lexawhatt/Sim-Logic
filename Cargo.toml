@@ -105,6 +105,11 @@ name = "ui_buttons"
 path = "examples/ui_buttons/main.rs"
 required-features = ["desktop", "text"]
 
+[[example]]
+name = "voxel_sandbox"
+path = "examples/voxel_sandbox/main.rs"
+required-features = ["desktop", "text"]
+
 [[bench]]
 name = "headless_runtime"
 harness = false
@@ -127,6 +132,12 @@ test = false
 
 [[bench]]
 name = "screen_text"
+harness = false
+test = false
+required-features = ["text"]
+
+[[bench]]
+name = "voxel_sandbox"
 harness = false
 test = false
 required-features = ["text"]
