@@ -9,15 +9,20 @@ use crate::{
 };
 use sim_logic::prelude::*;
 
-fn stop(local: &mut Local, session: &mut Session) {
+fn stop_gameplay(local: &mut Local, session: &mut Session) {
     local.movement = Movement::default();
     local.flight_vertical = 0.0;
     local.last_jump = None;
     local.look = [0.0; 2];
     local.middle_drag = false;
     local.last_pointer = None;
-    local.pointer.cancel();
     session.game.player.stop();
+}
+
+/// Invalidate a gesture only when its UI/input owner actually changes.
+fn stop(local: &mut Local, session: &mut Session) {
+    stop_gameplay(local, session);
+    local.pointer.cancel();
 }
 
 struct Router<'a, 'w> {
@@ -148,6 +153,7 @@ pub(super) fn route(
     }
     local.input_time = local.input_time.saturating_add(time.delta());
     if local.paused && local.menu == Menu::None {
+        local.pointer.cancel();
         local.menu = Menu::Pause;
     }
     let ready = local.phase == Phase::Ready;
@@ -161,6 +167,11 @@ pub(super) fn route(
     };
     if input.focus_lost() {
         router.menu(Menu::Pause)?;
+        // Drain cancellation releases even though this frame cannot activate
+        // anything. Otherwise the old hold suppresses the first fresh click.
+        for edge in input.edges() {
+            let _ = router.local.pointer.process(edge, None);
+        }
         return Ok(());
     }
     for edge in input.edges() {
@@ -290,7 +301,12 @@ pub(super) fn route(
         }
     }
     if !ready || router.local.paused || router.local.menu != Menu::None || router.local.departing {
-        stop(router.local, router.session);
+        // UI presses normally outlive one frame, including while gameplay is
+        // paused. Keep their owner until release or a real cancellation boundary.
+        stop_gameplay(router.local, router.session);
+        if !ready || router.local.departing {
+            router.local.pointer.cancel();
+        }
         router.capture.release();
         return Ok(());
     }

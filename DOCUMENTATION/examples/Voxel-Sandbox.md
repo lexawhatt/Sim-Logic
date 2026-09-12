@@ -62,8 +62,11 @@ remain available. Relative mouse motion is applied once per frame, without
 delta-time multiplication or fixed-tick replay.
 
 The center crosshair decides which block is edited. UI clicks require a press
-and release on the same eligible button; a cancelled or dragged-out gesture
-does not build through the interface. Building is limited to six blocks of
+and release on the same eligible button, including when held across frames
+while paused. Selecting a material changes the active hotbar slot and its icon;
+the inventory stays open. Changing menus or losing focus cancels a pending
+click, and a cancelled or dragged-out gesture does not build through the
+interface. Building is limited to six blocks of
 reach and cannot overlap the player's body. Creative mode supplies unlimited
 blocks. The model also retains a finite-inventory mode for tests: placement
 consumes one, breaking returns one, and each material holds at most 999.

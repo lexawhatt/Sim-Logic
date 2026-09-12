@@ -4,6 +4,9 @@ use super::{app, model, scene, view};
 use sim_logic::prelude::*;
 use std::time::Duration;
 
+#[path = "menu_clicks.rs"]
+mod menu_clicks;
+
 fn viewport() -> LogicResult<LogicalViewport> {
     Ok(LogicalViewport::new(1100.0, 720.0)?)
 }
@@ -107,7 +110,11 @@ fn creative_menu_assigns_the_selected_hotbar_slot_without_editing_or_saving() ->
             .ok_or("capture")?
             .requested()
     );
-    let index = model::Block::SOLID.len() - 1;
+    let index = 7;
+    assert_ne!(
+        session(&runner).game.inventory.hotbar()[8],
+        model::Block::SOLID[index]
+    );
     let [x, y, w, h] = view::Layout::new(viewport()?)
         .panel(view::Panel::Button(view::Button::CreativeBlock(index)));
     advance(&mut runner, &click([x + w * 0.5, y + h * 0.5])?)?;
