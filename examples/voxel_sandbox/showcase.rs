@@ -77,6 +77,7 @@ pub fn build(palette: &Palette) -> LogicResult<Vec<(Showcase, MeshVisual3d)>> {
             )?,
             surface,
         )?;
+        visual.set_visible(false);
         if kind == Showcase::PaintedBoard {
             // Initially shared with terrain. First edit must isolate this object;
             // later edits follow its private revision chain and can reuse buffers.
@@ -131,6 +132,9 @@ pub fn update(
     mut state: ResMut<PatchState>,
     mut visuals: Query<(&Showcase, &mut MeshVisual3d)>,
 ) -> LogicResult {
+    for (_, mut visual) in &mut visuals {
+        visual.set_visible(settings.studies && local.phase == Phase::Ready);
+    }
     if local.phase != Phase::Ready || state.applied == settings.patch_requests {
         return Ok(());
     }
@@ -219,7 +223,7 @@ mod tests {
                 assert!(report.failure().is_none(), "{:?}", report.failure());
                 Ok(())
             };
-        for _ in 0..3 {
+        for _ in 0..100 {
             advance(&mut runner, &[])?;
         }
         let board = runner

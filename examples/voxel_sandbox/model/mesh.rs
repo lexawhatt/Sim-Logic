@@ -1,6 +1,6 @@
 use sim_engine::{Color, Mesh3d, Mesh3dAttributes, Mesh3dError, TextureCoordinate2d, Vec3};
 
-use super::{Block, CHUNK_COUNT, CHUNK_SIZE, HEIGHT, Region, terrain::chunk_origin};
+use super::{Block, CHUNK_SIZE, HEIGHT, Region, terrain::chunk_origin};
 
 /// One nonempty material/shade batch, containing exposed faces only.
 /// shade: 0 bottom, 1 vertical side, 2 top. Coordinates are world-space blocks.
@@ -20,14 +20,18 @@ struct Faces {
 }
 
 impl Region {
-    /// At most 15 meshes and 3,072 quads per 8-cubed chunk. Neighbors across
-    /// chunk boundaries suppress internal faces. Invalid chunk IDs yield no meshes.
+    /// At most 96 material/shade meshes and 3,072 quads per resident 8-cubed chunk.
+    /// Unloaded neighbors are sampled procedurally, preserving boundary faces.
     pub fn chunk_meshes(&self, chunk: usize) -> Result<Vec<MeshPart>, Mesh3dError> {
-        if chunk >= CHUNK_COUNT {
+        if self.chunk_revision(chunk).is_none() {
             return Ok(Vec::new());
         }
-        let origin = chunk_origin(chunk);
-        let mut batches: Vec<Faces> = (0..15).map(|_| Faces::default()).collect();
+        let Some(origin) = chunk_origin(chunk) else {
+            return Ok(Vec::new());
+        };
+        let mut batches: Vec<Faces> = (0..Block::SOLID.len() * 3)
+            .map(|_| Faces::default())
+            .collect();
         for y in origin[1]..origin[1] + CHUNK_SIZE {
             for z in origin[2]..origin[2] + CHUNK_SIZE {
                 for x in origin[0]..origin[0] + CHUNK_SIZE {
@@ -40,14 +44,14 @@ impl Region {
                         // Collision solidity is not render occlusion: leaf
                         // masks have holes, so geometry behind them must remain.
                         let neighbor = self.get(neighbor);
-                        if neighbor.solid() && neighbor != Block::Leaves {
+                        if neighbor.occludes() || (block.translucent() && neighbor == block) {
                             continue;
                         }
                         let batch =
                             &mut batches[(block as usize - 1) * 3 + usize::from(face.shade)];
                         let first = batch.vertices.len() as u32;
                         batch.vertices.extend(face.corners.map(|corner| {
-                            // Coordinates are integer grid corners within [0, 24].
+                            // Signed coordinates stay within the explicit finite world bounds.
                             Vec3::new(
                                 x as f32 + corner[0],
                                 y as f32 + corner[1],

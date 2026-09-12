@@ -293,8 +293,8 @@ impl DesktopThreeD {
                     .clone(),
             );
         } else if let Some(mesh) = &self.mesh {
-            // This built-in mesh has no texture/material. Custom textured meshes
-            // exclusively use restore_scene3d (standalone dev.4 loses settings).
+            // This built-in mesh has no scene instance. Custom meshes restore
+            // with their scene so shared resources and stable IDs remain intact.
             self.mesh = Some(
                 renderer
                     .restore_mesh3d(mesh)
@@ -330,11 +330,7 @@ impl DesktopThreeD {
             );
         }
         let mesh = self.mesh.as_ref().ok_or(DesktopThreeDError::InvalidCache)?;
-        if self
-            .scene
-            .as_ref()
-            .is_none_or(|scene| scene.background() != snapshot.view().background())
-        {
+        if self.scene.is_none() {
             let scene = Scene3d::with_alpha_background_and_budget(
                 snapshot.view().background(),
                 engine_scene_budget(limits)?,
@@ -349,6 +345,11 @@ impl DesktopThreeD {
             .scene
             .as_mut()
             .ok_or(DesktopThreeDError::InvalidCache)?;
+        // Clear-color changes must not discard object IDs, dynamic capacities
+        // or texture lineage. Engine validates and mutates this field alone.
+        scene
+            .set_background(snapshot.view().background())
+            .map_err(DesktopThreeDError::Scene)?;
         scene.set_lighting(snapshot.view().lighting());
         scene.set_fog(snapshot.view().fog());
         for (index, record) in snapshot.cuboids().iter().enumerate() {

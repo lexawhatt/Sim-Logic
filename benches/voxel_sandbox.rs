@@ -34,9 +34,10 @@ mod projection;
 #[path = "../examples/voxel_sandbox/scene.rs"]
 mod scene;
 #[path = "../examples/voxel_sandbox/view.rs"]
+#[allow(dead_code, unused_imports)]
 mod view;
 
-const WARMUP_FRAMES: usize = 20;
+const WARMUP_FRAMES: usize = 100;
 const MEASURED_FRAMES: usize = 100;
 
 struct CountingAllocator;

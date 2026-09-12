@@ -393,3 +393,122 @@ fn rejected_key_press_or_release_preserves_adapter_held_state() -> Result<(), Bo
     assert_eq!(released.input_failure, Some(InputBufferFailure::Limit));
     Ok(())
 }
+
+#[test]
+fn relative_motion_coalesces_only_adjacent_samples_under_one_queue_slot()
+-> Result<(), Box<dyn Error>> {
+    let mut host = host(3)?;
+    let motion = InputEvent::relative_pointer_motion(RelativePointerMotion::new(0.5, -0.25)?);
+    for _ in 0..2000 {
+        assert!(host.collect_input(motion));
+    }
+    assert_eq!(
+        host.pending_events,
+        [InputEvent::relative_pointer_motion(
+            RelativePointerMotion::new(1000.0, -500.0)?
+        )]
+    );
+    host.collect_mouse_button(PlatformMouseButton::Left, ElementState::Pressed);
+    assert!(host.collect_input(motion));
+    assert_eq!(host.pending_events.len(), 3);
+    assert!(matches!(
+        host.pending_events[1],
+        InputEvent::MouseButton { .. }
+    ));
+    assert!(host.collect_input(motion));
+    assert_eq!(host.pending_events.len(), 3);
+    assert_eq!(
+        host.pending_events[2],
+        InputEvent::relative_pointer_motion(RelativePointerMotion::new(1.0, -0.5)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn relative_motion_overflow_is_sticky_and_preserves_accepted_tail() -> Result<(), Box<dyn Error>> {
+    let mut host = host(1)?;
+    let limit = InputEvent::relative_pointer_motion(RelativePointerMotion::new(
+        RelativePointerMotion::MAX_DISPLACEMENT,
+        0.0,
+    )?);
+    assert!(host.collect_input(limit));
+    let extra = InputEvent::relative_pointer_motion(RelativePointerMotion::new(1.0, 0.0)?);
+    assert!(!host.collect_input(extra));
+    assert_eq!(host.pending_events, [limit]);
+    assert_eq!(
+        host.input_failure,
+        Some(InputBufferFailure::RelativeMotion(
+            RelativePointerMotionError::OutOfRange
+        ))
+    );
+    assert!(!host.collect_input(InputEvent::FocusLost));
+    assert_eq!(host.pending_events, [limit]);
+    Ok(())
+}
+
+#[test]
+fn uncaptured_global_device_motion_never_enters_the_window_queue() -> Result<(), Box<dyn Error>> {
+    let mut host = host(1)?;
+    host.collect_relative_motion((12.0, 4.0))?;
+    host.capture.set_focused(true);
+    host.collect_relative_motion((15.0, -3.0))?;
+    host.collect_relative_motion((f64::NAN, f64::INFINITY))?;
+    assert!(host.pending_events.is_empty());
+    assert_eq!(host.input_failure, None);
+    Ok(())
+}
+
+#[test]
+fn capture_change_invalidates_old_position_before_click_without_fresh_motion()
+-> Result<(), Box<dyn Error>> {
+    for (before, after) in [(false, true), (true, false)] {
+        let mut host = host(8)?;
+        host.collect_cursor(PhysicalPosition::new(100.0, 120.0))?;
+        assert!(advance(&mut host)?.pointer.is_some());
+        host.collect_capture_change(before, after);
+        assert_eq!(host.pending_events, [InputEvent::PointerLeft]);
+        // A resize must not revive the pre-capture physical sample either.
+        host.collect_resize(PhysicalSize::new(900, 650))?;
+        assert_eq!(host.pending_events, [InputEvent::PointerLeft]);
+        host.collect_mouse_button(PlatformMouseButton::Left, ElementState::Pressed);
+        host.collect_mouse_button(PlatformMouseButton::Left, ElementState::Released);
+        let no_motion = advance(&mut host)?;
+        assert_eq!(no_motion.pointer, None);
+        assert_eq!(no_motion.edges.len(), 2);
+        assert!(no_motion.edges.iter().all(|edge| edge.pointer().is_none()));
+
+        host.collect_cursor(PhysicalPosition::new(420.0, 250.0))?;
+        host.collect_mouse_button(PlatformMouseButton::Left, ElementState::Pressed);
+        let fresh = advance(&mut host)?;
+        assert_eq!(fresh.edges.len(), 1);
+        assert_eq!(fresh.edges[0].pointer(), fresh.pointer);
+        assert_eq!(
+            fresh.pointer.ok_or("fresh absolute sample")?.position(),
+            sim_engine::LogicalScreenPosition::new(420.0, 250.0)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unchanged_capture_does_not_cancel_input_but_ownership_change_cancels_a_held_gesture()
+-> Result<(), Box<dyn Error>> {
+    let mut host = host(4)?;
+    host.collect_cursor(PhysicalPosition::new(100.0, 120.0))?;
+    host.collect_mouse_button(PlatformMouseButton::Left, ElementState::Pressed);
+    assert!(advance(&mut host)?.held);
+    for captured in [false, true] {
+        host.collect_capture_change(captured, captured);
+        assert!(host.pending_events.is_empty());
+    }
+    host.collect_capture_change(true, false);
+    let cancelled = advance(&mut host)?;
+    assert!(!cancelled.held);
+    assert_eq!(cancelled.pointer, None);
+    assert_eq!(cancelled.edges.len(), 1);
+    assert_eq!(
+        cancelled.edges[0].cancellation_reason(),
+        Some(InputCancellationReason::PointerLeft)
+    );
+    Ok(())
+}

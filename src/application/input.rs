@@ -11,6 +11,13 @@ mod pointer;
 use pointer::{ALL_MOUSE_BUTTONS, mouse_button_index};
 pub use pointer::{DuplicateMouseBinding, MouseButton, PointerSample, PointerSampleError};
 
+#[path = "input/motion.rs"]
+mod motion;
+pub use motion::{RelativePointerMotion, RelativePointerMotionError};
+#[path = "input/capture.rs"]
+mod capture;
+pub use capture::{PointerCapture, PointerCaptureStatus};
+
 #[cfg(test)]
 #[path = "input/cancellation_tests.rs"]
 mod cancellation_tests;
@@ -163,9 +170,23 @@ pub enum PhysicalKeyCode {
     KeyT,
     /// The physical V key.
     KeyV,
+    /// The physical 6 key on the number row.
+    Digit6,
+    /// The physical 7 key on the number row.
+    Digit7,
+    /// The physical 8 key on the number row.
+    Digit8,
+    /// The physical 9 key on the number row.
+    Digit9,
+    /// The physical F7 function key.
+    F7,
+    /// The physical E key.
+    KeyE,
+    /// The physical left Shift key.
+    ShiftLeft,
 }
 
-pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 30] = [
+pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 37] = [
     PhysicalKeyCode::KeyW,
     PhysicalKeyCode::KeyA,
     PhysicalKeyCode::KeyS,
@@ -196,6 +217,13 @@ pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 30] = [
     PhysicalKeyCode::KeyM,
     PhysicalKeyCode::KeyT,
     PhysicalKeyCode::KeyV,
+    PhysicalKeyCode::Digit6,
+    PhysicalKeyCode::Digit7,
+    PhysicalKeyCode::Digit8,
+    PhysicalKeyCode::Digit9,
+    PhysicalKeyCode::F7,
+    PhysicalKeyCode::KeyE,
+    PhysicalKeyCode::ShiftLeft,
 ];
 
 pub(crate) const SUPPORTED_PHYSICAL_KEY_COUNT: usize = ALL_PHYSICAL_KEYS.len();
@@ -229,6 +257,13 @@ pub enum InputEvent {
         /// Finite logical coordinates and the viewport at this point in event order.
         sample: PointerSample,
     },
+    /// Adds raw displacement to this frame's relative motion without changing
+    /// the absolute pointer or generating action edges. Not retained for fixed
+    /// ticks. FocusLost clears motion and ignores later motion in the same batch.
+    RelativePointerMotion {
+        /// Validated raw device displacement, independent of the viewport/DPI.
+        motion: RelativePointerMotion,
+    },
     /// A physical mouse-button state change, using the latest pointer sample.
     MouseButton {
         /// The physical mouse button.
@@ -259,6 +294,11 @@ impl InputEvent {
     /// Creates an ordered pointer-position update, independent of bindings.
     pub const fn pointer_moved(sample: PointerSample) -> Self {
         Self::PointerMoved { sample }
+    }
+
+    /// Supplies validated raw displacement; headless injection needs no OS capture.
+    pub const fn relative_pointer_motion(motion: RelativePointerMotion) -> Self {
+        Self::RelativePointerMotion { motion }
     }
 
     /// Creates a mouse-button event. Its logical edge captures the latest
@@ -413,6 +453,8 @@ impl<A: Action> ActionBindings<A> {
 /// Failure to configure or collect application input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputCollectionError {
+    /// Summing relative pointer events would exceed their numeric frame limit.
+    RelativeMotion(RelativePointerMotionError),
     /// The shared physical-event, generated-edge, and retained-edge limit is zero.
     ZeroEventLimit,
     /// The runtime could not reserve the bounded input storage required by the
@@ -454,6 +496,9 @@ pub enum InputCollectionError {
 impl fmt::Display for InputCollectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RelativeMotion(error) => {
+                write!(formatter, "relative input collection failed: {error}")
+            }
             Self::ZeroEventLimit => {
                 formatter.write_str("the input event and retained-edge limit must be positive")
             }
@@ -560,6 +605,8 @@ pub(crate) struct FrameInputState<A: Action> {
     held: HashSet<A>,
     edges: Vec<ActionEdge<A>>,
     pointer: Option<PointerSample>,
+    relative_motion: RelativePointerMotion,
+    focus_lost: bool,
 }
 
 impl<A: Action> FrameInputState<A> {
@@ -593,6 +640,8 @@ impl<A: Action> FrameInputState<A> {
             held: HashSet::new(),
             edges: Vec::new(),
             pointer: None,
+            relative_motion: RelativePointerMotion::ZERO,
+            focus_lost: false,
         }
     }
 
@@ -600,6 +649,8 @@ impl<A: Action> FrameInputState<A> {
         self.held.clear();
         self.edges.clear();
         self.pointer = None;
+        self.relative_motion = RelativePointerMotion::ZERO;
+        self.focus_lost = false;
     }
 
     fn replace_from(&mut self, held_action_counts: &HashMap<A, usize>, edges: &[ActionEdge<A>]) {
@@ -617,6 +668,18 @@ pub struct FrameInput<'w, A: Action> {
 }
 
 impl<A: Action> FrameInput<'_, A> {
+    /// Returns this frame's raw displacement. Apply sensitivity once, without
+    /// delta-time scaling. No fixed-tick delivery or transition replay occurs.
+    pub fn relative_motion(&self) -> RelativePointerMotion {
+        self.state.relative_motion
+    }
+
+    /// Reports a focus-loss boundary even when no mapped control was held.
+    /// All relative motion in that accepted batch is discarded.
+    pub fn focus_lost(&self) -> bool {
+        self.state.focus_lost
+    }
+
     /// Returns the latest accepted pointer sample, or None before motion or
     /// after leaving. Inactive-stage snapshots are empty. Use an action edge's
     /// [`ActionEdge::pointer`] for the position of a particular click.
@@ -703,6 +766,7 @@ pub(crate) struct FixedInputState<A: Action> {
     held: HashSet<A>,
     edges: Vec<ActionEdge<A>>,
     pointer: Option<PointerSample>,
+    focus_lost: bool,
 }
 
 impl<A: Action> FixedInputState<A> {
@@ -736,6 +800,7 @@ impl<A: Action> FixedInputState<A> {
             held: HashSet::new(),
             edges: Vec::new(),
             pointer: None,
+            focus_lost: false,
         }
     }
 
@@ -743,6 +808,7 @@ impl<A: Action> FixedInputState<A> {
         self.held.clear();
         self.edges.clear();
         self.pointer = None;
+        self.focus_lost = false;
     }
 
     fn replace_from(&mut self, held_action_counts: &HashMap<A, usize>, edges: &[ActionEdge<A>]) {
@@ -762,6 +828,14 @@ pub struct FixedInput<'w, A: Action> {
 }
 
 impl<A: Action> FixedInput<'_, A> {
+    /// Reports focus loss in this application frame, even with no held control.
+    /// True for every catch-up tick in that frame, so cached movement can stop
+    /// before FrameUpdate. Unlike edges, this boundary is not retained into a
+    /// later frame with a fixed tick. False outside FixedUpdate.
+    pub fn focus_lost(&self) -> bool {
+        self.state.focus_lost
+    }
+
     /// Returns the latest accepted pointer sample for this tick. Retained
     /// click edges keep their own earlier samples; later catch-up ticks retain
     /// the continuous pointer but do not replay those edges. During FrameUpdate
@@ -855,6 +929,8 @@ pub(crate) struct InputState<A: Action> {
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
     held_mouse: [bool; ALL_MOUSE_BUTTONS.len()],
     pointer: Option<PointerSample>,
+    relative_motion: RelativePointerMotion,
+    focus_lost: bool,
     held_action_counts: HashMap<A, usize>,
     frame_edges: Vec<ActionEdge<A>>,
     fixed_edges: Vec<ActionEdge<A>>,
@@ -890,6 +966,8 @@ impl<A: Action> InputState<A> {
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
             held_mouse: [false; ALL_MOUSE_BUTTONS.len()],
             pointer: None,
+            relative_motion: RelativePointerMotion::ZERO,
+            focus_lost: false,
             held_action_counts,
             frame_edges,
             fixed_edges,
@@ -912,6 +990,8 @@ impl<A: Action> InputState<A> {
             });
         }
 
+        let (relative_motion, focus_lost) =
+            motion::frame_motion(events).map_err(InputCollectionError::RelativeMotion)?;
         let report = self.preflight_frame(events, paused)?;
         let logical_edge_count = u64::try_from(report.logical_edges)
             .map_err(|_| InputCollectionError::OccurrenceIdentityExhausted)?;
@@ -924,6 +1004,8 @@ impl<A: Action> InputState<A> {
         }
 
         self.frame_edges.clear();
+        self.relative_motion = relative_motion;
+        self.focus_lost = focus_lost;
         let delivery = EdgeDelivery {
             paused,
             application,
@@ -940,6 +1022,7 @@ impl<A: Action> InputState<A> {
                     self.record_edge(InputControl::MouseButton(button), state, None, delivery);
                 }
                 InputEvent::PointerMoved { sample } => self.pointer = Some(sample),
+                InputEvent::RelativePointerMotion { .. } => {}
                 InputEvent::PointerLeft | InputEvent::FocusLost => {
                     let reason = cancellation_reason(*event);
                     self.pointer = None;
@@ -985,7 +1068,7 @@ impl<A: Action> InputState<A> {
                         &mut report,
                     );
                 }
-                InputEvent::PointerMoved { .. } => {}
+                InputEvent::PointerMoved { .. } | InputEvent::RelativePointerMotion { .. } => {}
                 InputEvent::PointerLeft | InputEvent::FocusLost => {
                     for control in cancelled_controls(cancellation_reason(*event)) {
                         // Synthetic no-op releases are not physical repeats
@@ -1042,11 +1125,14 @@ impl<A: Action> InputState<A> {
     pub(crate) fn copy_frame_snapshot_into(&self, target: &mut FrameInputState<A>) {
         target.replace_from(&self.held_action_counts, &self.frame_edges);
         target.pointer = self.pointer;
+        target.relative_motion = self.relative_motion;
+        target.focus_lost = self.focus_lost;
     }
 
     pub(crate) fn copy_fixed_snapshot_into(&self, target: &mut FixedInputState<A>) {
         target.replace_from(&self.held_action_counts, &self.fixed_edges);
         target.pointer = self.pointer;
+        target.focus_lost = self.focus_lost;
     }
 
     pub(crate) fn consume_fixed_delivery(&mut self) {
@@ -1082,10 +1168,14 @@ impl<A: Action> InputState<A> {
     pub(crate) fn clear_world_edges(&mut self) {
         self.frame_edges.clear();
         self.fixed_edges.clear();
+        self.relative_motion = RelativePointerMotion::ZERO;
+        self.focus_lost = false;
     }
 
     pub(crate) fn end_frame(&mut self) {
         self.frame_edges.clear();
+        self.relative_motion = RelativePointerMotion::ZERO;
+        self.focus_lost = false;
     }
 
     fn record_edge(
@@ -1233,6 +1323,13 @@ pub(crate) const fn physical_key_index(key: PhysicalKeyCode) -> usize {
         PhysicalKeyCode::KeyM => 27,
         PhysicalKeyCode::KeyT => 28,
         PhysicalKeyCode::KeyV => 29,
+        PhysicalKeyCode::Digit6 => 30,
+        PhysicalKeyCode::Digit7 => 31,
+        PhysicalKeyCode::Digit8 => 32,
+        PhysicalKeyCode::Digit9 => 33,
+        PhysicalKeyCode::F7 => 34,
+        PhysicalKeyCode::KeyE => 35,
+        PhysicalKeyCode::ShiftLeft => 36,
     }
 }
 
@@ -1315,7 +1412,7 @@ mod tests {
 
     #[test]
     fn physical_key_catalog_is_unique_and_round_trips_every_index() {
-        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 30);
+        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 37);
         let mut unique = HashSet::new();
 
         for (index, key) in ALL_PHYSICAL_KEYS.into_iter().enumerate() {
@@ -1662,13 +1759,11 @@ mod tests {
                 .collect();
             let frame = FrameInputState {
                 held: held.clone(),
-                edges: Vec::new(),
-                pointer: None,
+                ..FrameInputState::empty()
             };
             let fixed = FixedInputState {
                 held,
-                edges: Vec::new(),
-                pointer: None,
+                ..FixedInputState::empty()
             };
             let expected = Vec2::new(
                 f32::from(mask & 0b0010 != 0) - f32::from(mask & 0b0001 != 0),
@@ -1681,8 +1776,7 @@ mod tests {
 
         let diagonal = FrameInputState {
             held: HashSet::from([TestAction::Right, TestAction::Up]),
-            edges: Vec::new(),
-            pointer: None,
+            ..FrameInputState::empty()
         }
         .digital_axis(TEST_AXIS);
         assert_eq!(diagonal, Vec2::ONE);

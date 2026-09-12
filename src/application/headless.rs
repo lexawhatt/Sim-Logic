@@ -147,6 +147,16 @@ impl<A: Action> HeadlessRunner<A> {
         self.application_resources.get::<T>(&self.active.world)
     }
 
+    // Only the runtime/desktop boundary acknowledges capture. This is not a
+    // public escape hatch for mutating arbitrary resources outside scheduling.
+    pub(crate) fn with_pointer_capture<R>(
+        &mut self,
+        update: impl FnOnce(&mut crate::input::PointerCapture) -> R,
+    ) -> Option<R> {
+        self.application_resources
+            .with_mut(&mut self.active.world, update)
+    }
+
     /// Iterates over one component type for read-only headless inspection.
     ///
     /// Results include only managed logical entities, including entities with

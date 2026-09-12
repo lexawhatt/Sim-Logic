@@ -1,4 +1,4 @@
-use super::{Region, terrain::WIDTH};
+use super::{Region, terrain::WORLD_LIMIT};
 
 /// Camera-space movement values in [-1, 1]. A jump is a queued press, not held input.
 #[derive(Clone, Copy, Debug, Default)]
@@ -23,6 +23,8 @@ impl Player {
     pub const HEIGHT: f32 = 1.75;
     pub const EYE_HEIGHT: f32 = 1.58;
     pub const REACH: f32 = 6.0;
+    /// Maximum feet altitude in world units; creative flight respects this ceiling.
+    pub const MAX_ALTITUDE: f32 = 64.0;
 
     pub fn at(position: [f32; 3]) -> Self {
         Self {
@@ -88,6 +90,45 @@ impl Player {
             self.vertical_velocity * seconds,
             (-self.yaw.cos() * forward + self.yaw.sin() * strafe) * 4.5 * seconds,
         ];
+        self.move_bounded(region, motion);
+    }
+
+    /// Creative flight uses ordinary collisions, normalized three-axis motion
+    /// and no gravity. Invalid inputs leave the player unchanged.
+    pub fn step_flying(
+        &mut self,
+        region: &Region,
+        movement: Movement,
+        vertical: f32,
+        seconds: f32,
+    ) -> bool {
+        if !seconds.is_finite()
+            || !(0.0..=0.1).contains(&seconds)
+            || ![movement.forward, movement.strafe, vertical, self.yaw]
+                .into_iter()
+                .all(f32::is_finite)
+            || !self.position.into_iter().all(f32::is_finite)
+        {
+            return false;
+        }
+        let forward = movement.forward.clamp(-1.0, 1.0);
+        let strafe = movement.strafe.clamp(-1.0, 1.0);
+        let vertical = vertical.clamp(-1.0, 1.0);
+        let length = forward.hypot(strafe).hypot(vertical).max(1.0);
+        let speed = 7.0 * seconds / length;
+        self.vertical_velocity = 0.0;
+        self.move_bounded(
+            region,
+            [
+                (self.yaw.sin() * forward + self.yaw.cos() * strafe) * speed,
+                vertical * speed,
+                (-self.yaw.cos() * forward + self.yaw.sin() * strafe) * speed,
+            ],
+        );
+        true
+    }
+
+    fn move_bounded(&mut self, region: &Region, motion: [f32; 3]) {
         let steps = (motion.into_iter().map(f32::abs).fold(0.0, f32::max) / 0.12)
             .ceil()
             .max(1.0) as usize;
@@ -97,7 +138,7 @@ impl Player {
             for axis in [0, 2, 1] {
                 let old = self.position[axis];
                 self.position[axis] += delta[axis];
-                if self.collides(region) {
+                if self.position[1] > Self::MAX_ALTITUDE || self.collides(region) {
                     // Stop at the surface rather than retaining a whole substep
                     // of visible hovering space. Ten probes bound the work and
                     // leave less than 0.00012 blocks of separation.
@@ -106,7 +147,7 @@ impl Player {
                     for _ in 0..10 {
                         let fraction = (free + blocked) * 0.5;
                         self.position[axis] = old + delta[axis] * fraction;
-                        if self.collides(region) {
+                        if self.position[1] > Self::MAX_ALTITUDE || self.collides(region) {
                             blocked = fraction;
                         } else {
                             free = fraction;
@@ -166,9 +207,11 @@ impl Player {
             && self.yaw.is_finite()
             && self.pitch.is_finite()
             && (-1.45..=1.45).contains(&self.pitch)
-            && (Self::RADIUS..=WIDTH as f32 - Self::RADIUS).contains(&self.position[0])
-            && (Self::RADIUS..=WIDTH as f32 - Self::RADIUS).contains(&self.position[2])
-            && (0.0..=super::HEIGHT as f32 + 8.0).contains(&self.position[1])
+            && (-WORLD_LIMIT as f32 + Self::RADIUS..=WORLD_LIMIT as f32 - Self::RADIUS)
+                .contains(&self.position[0])
+            && (-WORLD_LIMIT as f32 + Self::RADIUS..=WORLD_LIMIT as f32 - Self::RADIUS)
+                .contains(&self.position[2])
+            && (0.0..=Self::MAX_ALTITUDE).contains(&self.position[1])
             && !self.collides(region)
     }
 }
@@ -186,7 +229,7 @@ pub struct Hit {
 pub fn raycast(region: &Region, origin: [f32; 3], direction: [f32; 3], reach: f32) -> Option<Hit> {
     if !origin
         .into_iter()
-        .all(|value| value.is_finite() && value.abs() <= 1024.0)
+        .all(|value| value.is_finite() && value.abs() <= WORLD_LIMIT as f32 + 8.0)
         || !direction.into_iter().all(f32::is_finite)
         || !reach.is_finite()
         || !(0.0..=Player::REACH).contains(&reach)

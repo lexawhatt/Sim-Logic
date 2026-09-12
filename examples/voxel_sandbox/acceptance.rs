@@ -1,4 +1,4 @@
-//! Bounded in-game dev.4 smoke drive. No user saves or synthetic OS input.
+//! Bounded in-game Engine 0.4 smoke drive. No user saves or synthetic OS input.
 
 use super::{
     app::{Action, Routes, Session},
@@ -41,14 +41,18 @@ fn step(
     drive.frame += 1;
     if drive.frame == 1 {
         commands.set_paused(true)?;
+        settings.studies = true;
     }
-    if drive.frame > 240 {
-        return Err("dev.4 drive exceeded its bounded loading allowance".into());
+    if drive.frame > 400 {
+        return Err("Engine 0.4 drive exceeded its bounded loading allowance".into());
     }
     if local.phase != Phase::Ready {
         return Ok(());
     }
-    if drive.ready == 96 {
+    if drive.ready == 128 {
+        if session.game.active_region().pending_chunks() != 0 {
+            return Err("streamed destination did not finish generating during acceptance".into());
+        }
         if drive.visits == 0 {
             let token = commands.new_transition_intent()?;
             commands.replace_world(token, routes.0[local.region.other().index()])?;
@@ -62,7 +66,7 @@ fn step(
                 return Err("save round-trip changed canonical state".into());
             }
             println!(
-                "dev.4 drive: 192 camera poses, two regions, {} edits, in-memory save round-trip",
+                "voxel drive: 256 camera poses, two streamed regions, {} edits, in-memory save round-trip",
                 session.edits
             );
             commands.request_exit()?;
@@ -70,6 +74,20 @@ fn step(
         return Ok(());
     }
     let pose = drive.ready;
+    if pose == 0 {
+        // Settings are world-local; enable the render probes after each entry.
+        settings.studies = true;
+    }
+    if pose == 96 {
+        // Exercise actual cache eviction and source retirement, not just a
+        // camera moving independently of the canonical streaming center.
+        session.game.player = Player::at(if drive.visits == 0 {
+            [-28.5, 12.0, -28.5]
+        } else {
+            [80.5, 12.0, 80.5]
+        });
+        session.game.player.pitch = -0.65;
+    }
     // Includes near-plane crossings, grazing axes and viewpoints inside terrain.
     // This is a real Native surface traversal, not CPU-side clipping emulation.
     let angle = pose as f32 * std::f32::consts::TAU / 24.0;
@@ -79,6 +97,11 @@ fn step(
         12.0 + angle.cos() * 9.0,
     )?;
     view.set_pose(eye, Vec3::new(12.125, 4.125, 12.125)?)?;
+    if pose >= 96 {
+        let player = session.game.player;
+        let [x, y, z] = player.eye();
+        view.set_pose(Vec3::new(x, y, z)?, Vec3::new(x + 3.0, y - 6.0, z - 8.0)?)?;
+    }
     if pose == 14 {
         // Exact camera from the original Engine 0.3 projected-orientation crash.
         let yaw = 14_f32 * 0.13;
@@ -125,7 +148,7 @@ fn break_one(session: &mut Session) -> LogicResult {
     }
     session.game.player = original;
     if !edited {
-        return Err("dev.4 terrain edit probe found no legal block".into());
+        return Err("Engine 0.4 terrain edit probe found no legal block".into());
     }
     session.edits = session.edits.saturating_add(1);
     Ok(())
@@ -134,11 +157,11 @@ fn break_one(session: &mut Session) -> LogicResult {
 pub fn verify(report: &DesktopRunReport) -> LogicResult {
     if report.exit_reason() != DesktopExitReason::ApplicationRequested
         || report.committed_transitions() != 1
-        || report.drawn_frames() < 194
+        || report.drawn_frames() < 258
         || report.skipped_frames() != 0
     {
         return Err(format!(
-            "dev.4 drive incomplete: {} presents, {} skips, {} transitions, {:?}",
+            "Engine 0.4 drive incomplete: {} presents, {} skips, {} transitions, {:?}",
             report.drawn_frames(),
             report.skipped_frames(),
             report.committed_transitions(),
@@ -148,10 +171,10 @@ pub fn verify(report: &DesktopRunReport) -> LogicResult {
     }
     let updates = report.three_d_updates();
     if updates.mesh_updates == 0 || updates.texture_updates < 6 {
-        return Err(format!("dev.4 update paths not exercised: {updates:?}").into());
+        return Err(format!("Engine 0.4 update paths not exercised: {updates:?}").into());
     }
     println!(
-        "dev.4 drive PASS: {} presents, updates={updates:?}",
+        "Engine 0.4 drive PASS: {} presents, updates={updates:?}",
         report.drawn_frames()
     );
     let timings = report.gpu_timings();

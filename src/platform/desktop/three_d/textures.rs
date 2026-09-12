@@ -18,6 +18,19 @@ pub(super) fn bind(
     source: LogicEntity,
     visual: &TextureVisual3d,
 ) -> Result<RetainedMesh3d, DesktopThreeDError> {
+    let material = material(renderer, scene, slots, source, visual)?;
+    renderer
+        .with_mesh3d_material(mesh, &material)
+        .map_err(|error| DesktopThreeDError::Texture { source, error })
+}
+
+fn material(
+    renderer: &WgpuRenderer,
+    scene: &Scene3d,
+    slots: &[MeshSlot],
+    source: LogicEntity,
+    visual: &TextureVisual3d,
+) -> Result<TextureMaterial3d, DesktopThreeDError> {
     let shared = slots.iter().find(|slot| {
         slot.texture
             .as_ref()
@@ -39,13 +52,12 @@ pub(super) fn bind(
         ImageFilter::Nearest => ImageSampling::Nearest,
         ImageFilter::Linear => ImageSampling::Linear,
     };
-    let material = TextureMaterial3d::with_alpha(&texture, sampling, visual.tint())
-        .map_err(|error| DesktopThreeDError::Texture { source, error })?
-        .with_uv_transform(visual.uv_transform())
-        .with_address_mode(visual.address_mode());
-    renderer
-        .with_mesh3d_material(mesh, &material)
-        .map_err(|error| DesktopThreeDError::Texture { source, error })
+    Ok(
+        TextureMaterial3d::with_alpha(&texture, sampling, visual.tint())
+            .map_err(|error| DesktopThreeDError::Texture { source, error })?
+            .with_uv_transform(visual.uv_transform())
+            .with_address_mode(visual.address_mode()),
+    )
 }
 
 pub(super) fn update(
@@ -97,22 +109,21 @@ pub(super) fn update(
             return Ok(());
         }
     }
-    let replacement = bind(
-        renderer,
-        scene,
-        slots,
-        scene
-            .instance(id)
-            .map_err(DesktopThreeDError::Scene)?
-            .mesh(),
-        source,
-        visual,
-    )?;
+    let replacement = material(renderer, scene, slots, source, visual)?;
     scene
-        .set_mesh(id, &replacement)
-        .map_err(|error| DesktopThreeDError::Object { source, error })?;
+        .set_texture_material(id, Some(&replacement))
+        .map_err(|error| material_error(source, error))?;
     slots[index].texture = Some(visual.clone());
     Ok(())
+}
+
+fn material_error(source: LogicEntity, error: Scene3dError) -> DesktopThreeDError {
+    match error {
+        // Preserve the existing texture diagnostic category when material
+        // validation moves from the renderer helper to scene-owned mutation.
+        Scene3dError::Texture(error) => DesktopThreeDError::Texture { source, error },
+        error => DesktopThreeDError::Object { source, error },
+    }
 }
 
 fn same_texture(left: &TextureVisual3d, right: &TextureVisual3d) -> bool {
@@ -256,10 +267,36 @@ fn patch_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{screen::ImageRegion, three_d::TextureAsset3d};
+    use crate::{
+        identity::{ApplicationId, WorldGeneration},
+        screen::ImageRegion,
+        three_d::TextureAsset3d,
+    };
 
     fn texture() -> TextureVisual3d {
         TextureVisual3d::new(TextureAsset3d::rgba8(4, 3, vec![0; 48], 48).unwrap())
+    }
+
+    #[test]
+    fn scene_material_errors_keep_the_existing_category_and_managed_source() {
+        let application = ApplicationId::from_raw(7);
+        let source = LogicEntity::new(
+            application,
+            WorldGeneration::new(application, 3),
+            bevy_ecs::entity::Entity::from_raw_u32(4).unwrap(),
+        );
+        let texture = Texture3dError::MissingTextureCoordinates;
+        assert!(matches!(
+            material_error(source, Scene3dError::Texture(texture)),
+            DesktopThreeDError::Texture { source: current, error }
+                if current == source && error == texture
+        ));
+        let scene = Scene3dError::InvalidBackground;
+        assert!(matches!(
+            material_error(source, scene),
+            DesktopThreeDError::Object { source: current, error }
+                if current == source && error == scene
+        ));
     }
 
     #[test]

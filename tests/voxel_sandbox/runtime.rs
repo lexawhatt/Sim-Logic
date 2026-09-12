@@ -40,7 +40,11 @@ impl Drop for Scratch {
 }
 
 fn application(path: PathBuf) -> LogicResult<(Application<app::Action>, WorldFactoryId)> {
-    app::build_application(TimeConfig::new(STEP, 4)?, path)
+    let (mut app, initial) = app::build_application(TimeConfig::new(STEP, 4)?, path)?;
+    // Retain the original finite-inventory contract tests alongside the new
+    // default creative-mode scenarios in interface.rs.
+    app.add_frame_system(|mut session: AppResMut<app::Session>| session.game.creative = false);
+    Ok((app, initial))
 }
 
 fn runner(path: PathBuf) -> LogicResult<HeadlessRunner<app::Action>> {
@@ -172,7 +176,7 @@ fn assert_part_revisions(
 }
 
 fn ready(runner: &mut HeadlessRunner<app::Action>) -> LogicResult {
-    for _ in 0..3 {
+    for _ in 0..100 {
         if local(runner)?.phase == scene::Phase::Ready {
             return Ok(());
         }
@@ -208,6 +212,13 @@ fn aim_at_ground(runner: &mut HeadlessRunner<app::Action>) -> LogicResult {
 
 fn break_one(runner: &mut HeadlessRunner<app::Action>) -> LogicResult<([i32; 3], model::Block)> {
     aim_at_ground(runner)?;
+    if !runner
+        .app_resource::<PointerCapture>()
+        .ok_or("capture")?
+        .requested()
+    {
+        advance(runner, Duration::ZERO, &click(GAME, MouseButton::Left)?)?;
+    }
     let hit = session(runner)?.game.target().ok_or("ground target")?;
     let block = session(runner)?.game.active_region().get(hit.cell);
     let edits = session(runner)?.edits;
@@ -251,10 +262,13 @@ fn loading_rejects_game_actions_and_idle_frames_share_mesh_storage() -> LogicRes
     assert!(runner.resource::<View3d>().ok_or("view")?.enabled());
     assert_eq!(
         runner.components::<projection::ChunkStamp>().count(),
-        model::CHUNK_COUNT,
+        model::MAX_RESIDENT_CHUNKS,
         "empty chunks must publish committed stamps too"
     );
-    assert_eq!(local(&runner)?.rebuilt_chunks, model::CHUNK_COUNT as u64);
+    assert_eq!(
+        local(&runner)?.rebuilt_chunks,
+        model::MAX_RESIDENT_CHUNKS as u64
+    );
     let assets: Vec<_> = runner
         .components::<MeshVisual3d>()
         .map(|(entity, visual)| (entity, visual.asset().clone()))
@@ -263,7 +277,10 @@ fn loading_rejects_game_actions_and_idle_frames_share_mesh_storage() -> LogicRes
     for _ in 0..3 {
         advance(&mut runner, Duration::ZERO, &[])?;
     }
-    assert_eq!(local(&runner)?.rebuilt_chunks, model::CHUNK_COUNT as u64);
+    assert_eq!(
+        local(&runner)?.rebuilt_chunks,
+        model::MAX_RESIDENT_CHUNKS as u64
+    );
     for (entity, asset) in assets {
         assert!(
             runner
@@ -280,32 +297,25 @@ fn edits_rebuild_only_dirty_chunks_and_survive_both_directions_of_travel() -> Lo
     let scratch = Scratch::new()?;
     let mut runner = runner(scratch.save())?;
     ready(&mut runner)?;
-    let revisions: [_; model::CHUNK_COUNT] = std::array::from_fn(|chunk| {
-        session(&runner)
-            .unwrap()
-            .game
-            .active_region()
-            .chunk_revision(chunk)
-    });
+    let revisions = local(&runner)?.chunk_revisions.clone();
     let assets = part_snapshots(&runner)?;
     let meadow = break_one(&mut runner)?;
     let dirty: Vec<_> = revisions
         .iter()
-        .enumerate()
         .filter_map(|(chunk, revision)| {
-            (*revision
+            (Some(*revision)
                 != session(&runner)
                     .ok()?
                     .game
                     .active_region()
-                    .chunk_revision(chunk))
-            .then_some(chunk)
+                    .chunk_revision(*chunk))
+            .then_some(*chunk)
         })
         .collect();
     assert!(!dirty.is_empty());
     assert_eq!(
         local(&runner)?.rebuilt_chunks,
-        (model::CHUNK_COUNT + dirty.len()) as u64
+        (model::MAX_RESIDENT_CHUNKS + dirty.len()) as u64
     );
     assert_part_revisions(&runner, &assets, &dirty)?;
     travel(&mut runner)?;
@@ -362,6 +372,9 @@ fn ui_capture_cancellation_and_pause_keep_gameplay_exclusive() -> LogicResult {
         assert!(local(&runner)?.pointer.captured().is_none());
         assert_eq!(session(&runner)?.edits, 0);
     }
+    // Focus loss opens the pause menu. The creative inventory exposes the
+    // hotbar again, with the cursor free and gameplay still paused.
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::KeyE))?;
     advance(
         &mut runner,
         Duration::ZERO,
@@ -372,10 +385,16 @@ fn ui_capture_cancellation_and_pause_keep_gameplay_exclusive() -> LogicResult {
         model::Block::Wood
     );
     advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::KeyP))?;
+    assert!(!runner.is_paused());
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::KeyP))?;
     assert!(runner.is_paused());
     let ticks = session(&runner)?.ticks;
     let paused_position = session(&runner)?.game.player.position;
-    let paused = advance(&mut runner, STEP * 4, &click(GAME, MouseButton::Left)?)?;
+    let paused = advance(
+        &mut runner,
+        STEP * 4,
+        &click((20.0, 360.0), MouseButton::Left)?,
+    )?;
     assert_eq!(paused.fixed_ticks_attempted(), 0);
     assert_eq!(session(&runner)?.ticks, ticks);
     assert_eq!(session(&runner)?.game.player.position, paused_position);
@@ -415,6 +434,16 @@ fn right_click_builds_one_selected_block_and_breaking_returns_inventory() -> Log
     advance(
         &mut runner,
         Duration::ZERO,
+        &click(GAME, MouseButton::Left)?,
+    )?;
+    assert_eq!(
+        session(&runner)?.edits,
+        0,
+        "capture click is not a terrain edit"
+    );
+    advance(
+        &mut runner,
+        Duration::ZERO,
         &click(GAME, MouseButton::Right)?,
     )?;
     assert_eq!(
@@ -447,6 +476,11 @@ fn new_material_parts_retire_without_replacing_surviving_chunk_entities() -> Log
     ready(&mut runner)?;
     aim_at_ground(&mut runner)?;
     let original = part_snapshots(&runner)?;
+    advance(
+        &mut runner,
+        Duration::ZERO,
+        &click(GAME, MouseButton::Left)?,
+    )?;
     advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::Digit3))?;
     advance(
         &mut runner,
@@ -511,7 +545,7 @@ fn save_and_load_restore_both_regions_through_a_fresh_world_generation() -> Logi
     travel(&mut runner)?;
     let canyon = break_one(&mut runner)?;
     advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::Digit3))?;
-    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F5))?;
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F7))?;
     assert!(session(&runner)?.notice.starts_with("Saved"));
     let saved_inventory = session(&runner)?.game.inventory.clone();
     travel(&mut runner)?;
@@ -564,9 +598,9 @@ fn load_io_and_corruption_failures_preserve_the_running_game() -> LogicResult {
         advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F9))?;
         assert!(session(&runner)?.notice.starts_with("Load failed:"));
         assert!(
-            runner.components::<ScreenTextVisual>().any(|(_, text)| {
-                text.text().contains("PAUSED") && text.text().contains("Load failed:")
-            }),
+            runner
+                .components::<ScreenTextVisual>()
+                .any(|(_, text)| { text.text().contains("Load failed:") }),
             "a failed load must be visible while paused"
         );
         assert_eq!(runner.world_generation(), generation);
@@ -578,18 +612,18 @@ fn load_io_and_corruption_failures_preserve_the_running_game() -> LogicResult {
         );
     }
     // A conflicting sibling temp file must fail without replacing either file.
-    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F5))?;
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F7))?;
     let old_save = std::fs::read(scratch.save())?;
     let temp = scratch
         .0
         .join(format!("world.save.{}.tmp", std::process::id()));
     std::fs::write(&temp, b"owned by another save attempt")?;
-    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F5))?;
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F7))?;
     assert!(session(&runner)?.notice.starts_with("Save failed:"));
     assert!(
-        runner.components::<ScreenTextVisual>().any(|(_, text)| {
-            text.text().contains("PAUSED") && text.text().contains("Save failed:")
-        }),
+        runner
+            .components::<ScreenTextVisual>()
+            .any(|(_, text)| { text.text().contains("Save failed:") }),
         "a failed save must be visible while paused"
     );
     assert_eq!(std::fs::read(scratch.save())?, old_save);
@@ -673,18 +707,17 @@ fn rejected_structural_batch_keeps_old_meshes_then_retries_the_canonical_edit() 
     ready(&mut runner)?;
     aim_at_ground(&mut runner)?;
     let hit = session(&runner)?.game.target().ok_or("ground target")?;
-    let revisions: [_; model::CHUNK_COUNT] = std::array::from_fn(|chunk| {
-        session(&runner)
-            .unwrap()
-            .game
-            .active_region()
-            .chunk_revision(chunk)
-    });
+    let revisions = local(&runner)?.chunk_revisions.clone();
     let old_meshes = part_snapshots(&runner)?;
     let old_stamps: Vec<_> = runner
         .components::<projection::ChunkStamp>()
         .map(|(entity, stamp)| (entity, stamp.chunk, stamp.revision, stamp.epoch))
         .collect();
+    advance(
+        &mut runner,
+        Duration::ZERO,
+        &click(GAME, MouseButton::Left)?,
+    )?;
     reject.store(true, Ordering::SeqCst);
     let failed = report(
         &mut runner,
@@ -719,15 +752,14 @@ fn rejected_structural_batch_keeps_old_meshes_then_retries_the_canonical_edit() 
     advance(&mut runner, Duration::ZERO, &[])?;
     let dirty: Vec<_> = revisions
         .iter()
-        .enumerate()
         .filter_map(|(chunk, revision)| {
-            (*revision
+            (Some(*revision)
                 != session(&runner)
                     .ok()?
                     .game
                     .active_region()
-                    .chunk_revision(chunk))
-            .then_some(chunk)
+                    .chunk_revision(*chunk))
+            .then_some(*chunk)
         })
         .collect();
     assert_part_revisions(&runner, &old_meshes, &dirty)?;
@@ -748,7 +780,7 @@ fn a_failed_load_cannot_install_during_an_unrelated_later_travel() -> LogicResul
     });
     let mut runner = application.build_headless(initial)?;
     ready(&mut runner)?;
-    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F5))?;
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::F7))?;
     assert!(session(&runner)?.notice.starts_with("Saved"));
     let broken = break_one(&mut runner)?;
     let inventory = session(&runner)?.game.inventory.clone();

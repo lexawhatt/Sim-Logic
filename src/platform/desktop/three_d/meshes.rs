@@ -115,10 +115,10 @@ impl CustomMeshes {
         limits: ThreeDRenderLimits,
     ) -> Result<RetainedMesh3d, DesktopThreeDError> {
         let incoming = record.visual();
-        let shared = self.slots.iter().find(|slot| {
-            slot.asset.shares_storage(incoming.asset())
-                && (incoming.texture().is_some() || slot.texture.is_none())
-        });
+        let shared = self
+            .slots
+            .iter()
+            .find(|slot| slot.asset.shares_storage(incoming.asset()));
         let mesh = if let Some(slot) = shared {
             scene
                 .instance(slot.scene.id)
@@ -143,7 +143,9 @@ impl CustomMeshes {
                 texture,
             )
         } else {
-            Ok(mesh)
+            // A material-free alias retains all shared topology/attributes.
+            // No second geometry upload is needed for an untextured instance.
+            Ok(mesh.without_material())
         }
     }
 
@@ -176,19 +178,15 @@ impl CustomMeshes {
                 applied.style = unlit;
             }
             if removing_texture {
-                // Engine has no material-removal operation. Plain replacement
-                // remains explicitly bounded and preserves the scene object ID.
-                let mesh = renderer
-                    .create_mesh3d_with_budget(
-                        incoming.asset().mesh().clone(),
-                        upload_budget(limits, scene, true)?,
-                    )
-                    .map_err(DesktopThreeDError::Resource)?;
+                // Detach first: a simultaneous geometry edit may remove UVs.
+                // Record success before another fallible update so retries do
+                // not assume a material that Engine has already removed.
                 scene
-                    .set_mesh(id, &mesh)
+                    .set_texture_material(id, None)
                     .map_err(|error| DesktopThreeDError::Object { source, error })?;
                 self.slots[index].texture = None;
-            } else {
+            }
+            if changing_mesh {
                 let budget = dynamic_budget(limits, scene, id)?;
                 let report = renderer
                     .update_scene3d_mesh(scene, id, incoming.asset().mesh().clone(), budget)

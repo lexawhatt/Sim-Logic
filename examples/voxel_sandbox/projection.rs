@@ -3,7 +3,7 @@
 use super::{
     app::Session,
     materials::{self, Palette, Settings},
-    model::{Block, CHUNK_COUNT},
+    model::Block,
     scene::{Local, Phase},
 };
 use sim_logic::prelude::*;
@@ -50,23 +50,39 @@ pub fn project(
                 .ok_or("pending load disappeared")?;
             session.game = pending.game;
             session.epoch = session.epoch.wrapping_add(1).max(1);
-            session.notice = "Save loaded. Both regions restored.".into();
+            session.notify("Save loaded. Both regions restored.");
         }
         session.game.travel(local.region);
     }
+    session.game.stream_active()?;
     let region = session.game.region(local.region);
-    let mut committed = [0; CHUNK_COUNT];
+    local.chunk_revisions.clear();
     for (_, stamp) in &stamps {
-        if stamp.epoch == session.epoch {
-            committed[stamp.chunk] = stamp.revision;
+        if stamp.epoch == session.epoch && region.chunk_revision(stamp.chunk).is_some() {
+            local.chunk_revisions.push((stamp.chunk, stamp.revision));
         }
     }
-    local.chunk_revisions = committed;
-    // Prepare every changed value before enqueueing structural changes.
+    local
+        .chunk_revisions
+        .sort_unstable_by_key(|(chunk, _)| *chunk);
+    // Only two chunks may generate meshes in one frame. The desired order starts
+    // near the player; cache residency does not affect canonical collision.
     let mut replacements = Vec::new();
-    for (chunk, committed_revision) in committed.into_iter().enumerate() {
-        let revision = region.chunk_revision(chunk).ok_or("invalid chunk")?;
-        if committed_revision == revision {
+    let mut pending_meshes = 0;
+    for &chunk in region.desired_chunks() {
+        let Some(revision) = region.chunk_revision(chunk) else {
+            continue;
+        };
+        let committed = local
+            .chunk_revisions
+            .binary_search_by_key(&chunk, |(id, _)| *id)
+            .ok()
+            .map(|index| local.chunk_revisions[index].1);
+        if committed == Some(revision) {
+            continue;
+        }
+        pending_meshes += 1;
+        if replacements.len() >= 2 {
             continue;
         }
         let mut visuals = Vec::new();
@@ -82,7 +98,19 @@ pub fn project(
         }
         replacements.push((chunk, revision, visuals));
     }
-    let complete = replacements.is_empty();
+    let complete = pending_meshes == 0 && region.pending_chunks() == 0;
+    // Retire no-longer-resident presentation only. Edits stay in the region's
+    // sparse store and recreate the same cells after revisiting this coordinate.
+    for (entity, part) in &parts {
+        if region.chunk_revision(part.chunk).is_none() {
+            commands.despawn(entity.handle())?;
+        }
+    }
+    for (entity, stamp) in &stamps {
+        if region.chunk_revision(stamp.chunk).is_none() {
+            commands.despawn(entity.handle())?;
+        }
+    }
     for (chunk, revision, visuals) in &replacements {
         for (entity, part) in &parts {
             if part.chunk == *chunk {

@@ -5,8 +5,8 @@
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
 background. This is real geometric 3D, not projected screen rectangles.
-The bridge pins Engine `0.4.0-dev.4` at git revision
-`1afbc7c5a71a7aabafe41d16ac2502bef7424e2f`, an integration candidate rather than
+The bridge pins Engine `0.4.0-dev.5` at git revision
+`98b2c4d7cccc694ad1be02ff5f2fa626c41c55a5`, an integration candidate rather than
 the final registry release. Cuboids keep their simple opaque/outline API.
 Host-built meshes support vertex colors, UVs, normals, Opaque/Mask/Blend
 materials, textures and explicit lighting/fog. Mesh import, normal generation,
@@ -211,10 +211,12 @@ total upload. Revision identity is process-local, never a persistent asset key.
 
 The bridge patches only a direct parent revision with the same mip policy;
 skipped revisions use a full replacement. Engine's final scene budgets and
-finite old/new overlap ceilings apply independently. Removing a material
-currently needs a plain mesh replacement because Engine has no detach setter.
-Changing `View3d`'s background recreates the scene and its GPU resources; do not
-animate the sky by changing that value every frame.
+finite old/new overlap ceilings apply independently. Removing or rebinding a
+material retains geometry and attributes, without a geometry upload. A new
+texture can still need its own allocation/upload. Plain and textured instances
+of the same asset can share geometry independently of their materials.
+Changing `View3d`'s background updates only the clear color, preserving object
+IDs, mesh capacity and texture revisions.
 
 ## Desktop measurements and recovery
 
@@ -233,9 +235,10 @@ These counters are not whole-frame allocation or universal FPS measurements.
 Device recovery restores whole scenes, keeping object IDs, reserved geometry
 capacity, texture revisions and material settings. Targets are recreated for
 the new device. Pending timing associations are cleared, not reassigned to
-new-device frames. The pinned Engine's standalone textured `restore_mesh3d`
-has a known material-preservation regression; the bridge does not use it for
-textured meshes.
+new-device frames. Engine dev.5 fixes the earlier standalone textured
+`restore_mesh3d` material regression. The unchanged manual consumer test passes
+on NVIDIA/Vulkan; this is not Intel qualification or a final Engine release.
+The bridge keeps whole-scene recovery for shared-resource deduplication.
 
 ## Geometry, camera, and view switching
 
@@ -314,9 +317,8 @@ topology. Target dimensions follow the renderer's physical extent and logical
 viewport. Resize or scale changes clear Engine's cached composition bindings
 and release the obsolete target before creating its replacement. This drops
 the host's retained references; it does not force the GPU driver to retire
-already submitted work immediately. A changed background rebuilds scene
-metadata because the pinned Engine scene background is immutable. Unchanged
-backgrounds reuse it.
+already submitted work immediately. Background changes update the retained
+scene in place without rebuilding its metadata or resources.
 
 The adapter caches each slot's last applied transform, style, and visibility,
 so unchanged fields do not call Engine setters. Engine 0.3 uses indexed object
@@ -423,10 +425,10 @@ Composition failures remain presentation errors. Cache uploads, allocations,
 or a successful prepass may have happened before a later failure; no partially
 composed surface frame is presented, and canonical state is not rolled back.
 
-After successful renderer recovery or renderer replacement, the adapter
-invalidates its mesh, scene, and target cache. The next enabled 3D presentation
-recreates them from the built-in topology and current CPU snapshot. Recovery
-does not require replacing the World or replaying gameplay/audio events.
+Successful device recovery restores the retained scene and its mesh resources;
+the target is recreated on the next enabled 3D presentation. A newly created
+desktop renderer starts with empty caches. Neither route replaces the World or
+replays gameplay/audio events.
 
 In StrictPortable mode, numerically ambiguous grazing or nearly edge-on cases
 can still return an object-attributed portability error. Native avoids that

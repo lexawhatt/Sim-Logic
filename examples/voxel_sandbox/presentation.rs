@@ -1,118 +1,171 @@
-//! Camera and HUD are derived from canonical game state, never used as storage.
+//! Camera and HUD are derived from canonical state, never used as storage.
 
 use super::{
     app::Session,
     materials::{self, Settings},
-    model::{Block, RegionId},
     scene::{Local, Phase, SelectionEdge},
-    view::{self, Button, Label, Layout, Panel},
+    view::{
+        self, Label, Layout, Menu, Panel,
+        content::{Stamp, panel_color},
+    },
 };
 use sim_engine::{Rotation3d, Transform3d};
 use sim_logic::prelude::*;
 
-#[derive(PartialEq, Eq)]
-struct Stamp {
-    region: RegionId,
-    phase: Phase,
-    paused: bool,
-    counts: [u16; 5],
-    selected: Block,
-    target: Option<([i32; 3], Block)>,
-    edits: u64,
-    rebuilt: u64,
-}
-
-#[derive(Default, Resource)]
-pub struct HudCache {
-    stamp: Option<Stamp>,
-    notice: String,
-}
-
-fn caption(label: Label, stamp: &Stamp, notice: &str) -> String {
-    match label {
-        Label::Title => format!("TWIN FIELDS / {}", stamp.region.name()),
-        Label::Status => format!(
-            "Two persistent regions / {} edits / {} chunk rebuilds / N travel / P pause / Esc exit",
-            stamp.edits, stamp.rebuilt
-        ),
-        Label::Help => {
-            "WASD move / Arrows or middle-drag look / Space jump / LMB break / RMB build".into()
-        }
-        Label::Notice if stamp.phase != Phase::Ready => "Loading saved terrain...".into(),
-        Label::Notice if stamp.paused => format!(
-            "PAUSED / P to resume / {}",
-            notice.chars().take(90).collect::<String>()
-        ),
-        Label::Notice => notice.chars().take(120).collect(),
-        Label::Target => stamp
-            .target
-            .map(|(cell, block)| {
-                format!("{} [{}, {}, {}]", block.name(), cell[0], cell[1], cell[2])
-            })
-            .unwrap_or_default(),
-        Label::Button(button) => match button {
-            Button::Travel => "Travel [N]".into(),
-            Button::Pause => if stamp.paused {
-                "Resume [P]"
-            } else {
-                "Pause [P]"
-            }
-            .into(),
-            Button::Save => "F5 Save".into(),
-            Button::Load => "F9 Load".into(),
-            Button::Slot(index) => format!(
-                "{} {}  {}",
-                index + 1,
-                Block::SOLID[index].name(),
-                stamp.counts[index]
-            ),
-        },
-    }
-}
-
-fn panel_color(
-    panel: Panel,
-    local: &Local,
-    session: &Session,
-    pointer: Option<PointerSample>,
-) -> Color {
-    match panel {
-        Panel::Header | Panel::Footer => Color::rgba(0.035, 0.055, 0.078, 0.94),
-        Panel::CrossHorizontal | Panel::CrossVertical => Color::WHITE,
-        Panel::Button(button) => {
-            if local.pointer.captured() == Some(button) {
-                return Color::rgb8(145, 103, 41);
-            }
-            if let Button::Slot(index) = button
-                && session.game.inventory.selected() == Block::SOLID[index]
-            {
-                return Color::rgb8(46, 108, 81);
-            }
-            if pointer.and_then(view::hit) == Some(button) {
-                Color::rgb8(57, 78, 102)
-            } else {
-                Color::rgb8(34, 47, 63)
-            }
-        }
-    }
-}
+pub use super::view::content::HudCache;
 
 #[allow(clippy::too_many_arguments, reason = "disjoint presentation-only data")]
 pub fn present(
     viewport: FrameViewport,
+    time: FrameTime,
     input: FrameInput<super::app::Action>,
     local: Res<Local>,
     session: AppRes<Session>,
     fonts: AppRes<view::Fonts>,
     settings: Res<Settings>,
+    capture: AppRes<PointerCapture>,
     mut view: ResMut<View3d>,
     mut cache: ResMut<HudCache>,
-    mut panels: Query<(&Panel, &mut ScreenRectangleVisual)>,
-    mut labels: Query<(&Label, &mut ScreenTextVisual)>,
+    mut panels: Query<(LogicEntityRef, &Panel, Option<&mut ScreenRectangleVisual>)>,
+    mut labels: Query<(LogicEntityRef, &Label, Option<&mut ScreenTextVisual>)>,
     mut outline: Query<(&SelectionEdge, &mut CuboidVisual3d)>,
+    meshes: Query<&MeshVisual3d>,
+    mut commands: Commands,
 ) -> LogicResult {
     let layout = Layout::new(viewport.logical());
     let ready = local.phase == Phase::Ready;
+    camera(&mut view, &local, &session, &settings)?;
+    let target = ready.then(|| session.game.target()).flatten();
+    let stamp = Stamp::new(&local, &session);
+    let debug_due = cache.tick(
+        local.debug,
+        time.delta(),
+        &session.notice,
+        session.notice_revision,
+    );
+    let changed = cache.changed(&stamp, &session.notice, session.notice_revision);
+    if debug_due {
+        let (mut objects, mut vertices, mut triangles) = (0_usize, 0_usize, 0_usize);
+        if ready {
+            for mesh in &meshes {
+                if mesh.visible() {
+                    objects = objects.saturating_add(1);
+                    vertices = vertices.saturating_add(mesh.asset().mesh().vertices().len());
+                    triangles = triangles.saturating_add(mesh.asset().mesh().triangle_count());
+                }
+            }
+        }
+        cache.sample_debug(
+            &local, &session, &settings, &capture, objects, vertices, triangles,
+        );
+    }
+
+    // Lazily reuse one parsed face/plan per changed font batch. Hidden labels
+    // never format or shape. Sessions borrow registrations only for this call.
+    let mut preparations: [Option<TextPreparationSession<'_>>; 3] = [None, None, None];
+    for (entity, label, visual) in &mut labels {
+        if !cache.visible(*label, &local, &session) {
+            if visual.is_some() {
+                commands.remove::<ScreenTextVisual>(entity.handle())?;
+            }
+            continue;
+        }
+        let font_index = fonts.index(*label, layout);
+        let font = &fonts.0[font_index];
+        let caption_changed = if matches!(label, Label::Debug(_)) {
+            debug_due
+        } else {
+            changed
+        };
+        let needs_text =
+            caption_changed || visual.as_ref().is_none_or(|value| value.font() != font);
+        if needs_text {
+            let preparation = &mut preparations[font_index];
+            if preparation.is_none() {
+                *preparation = Some(font.shaping_session()?);
+            }
+            let shaping = preparation.as_mut().ok_or("missing HUD shaping session")?;
+            let caption = cache.caption(*label, &stamp, &session.notice);
+            if let Some(mut visual) = visual {
+                if visual.font() != font {
+                    *visual = view::text(shaping, *label, &caption, layout, local.menu)?;
+                } else {
+                    let (position, alignment) = layout.label(*label, local.menu);
+                    visual.set_position(position)?;
+                    visual.set_alignment(alignment)?;
+                    visual.set_text_with_session(shaping, &caption)?;
+                }
+            } else {
+                // Query actual component presence, not cached requested state:
+                // a discarded command batch must retry an opening next frame.
+                commands.insert(
+                    entity.handle(),
+                    view::text(shaping, *label, &caption, layout, local.menu)?,
+                )?;
+            }
+        } else if let Some(mut visual) = visual {
+            let (position, alignment) = layout.label(*label, local.menu);
+            visual.set_position(position)?;
+            visual.set_alignment(alignment)?;
+        }
+    }
+    cache.publish(stamp, &session.notice, session.notice_revision);
+
+    let hover = if capture.requested() && local.menu == Menu::None {
+        None
+    } else {
+        input
+            .pointer()
+            .and_then(|pointer| view::hit(pointer, local.menu))
+    };
+    for (entity, panel, visual) in &mut panels {
+        if !view::panel_visible(
+            *panel,
+            local.menu,
+            local.debug,
+            session.game.inventory.selected_slot(),
+        ) {
+            if visual.is_some() {
+                commands.remove::<ScreenRectangleVisual>(entity.handle())?;
+            }
+            continue;
+        }
+        let color = panel_color(*panel, &local, &session, hover);
+        if let Some(mut visual) = visual {
+            let [x, y, width, height] = layout.panel(*panel);
+            visual.set_geometry(
+                LogicalScreenPosition::new(x, y),
+                LogicalScreenVector::new(width, height),
+            )?;
+            visual.set_color(color)?;
+        } else {
+            commands.insert(entity.handle(), view::rectangle(*panel, layout, color)?)?;
+        }
+    }
+    for (edge, mut visual) in &mut outline {
+        visual.set_visible(target.is_some() && local.menu == Menu::None && !local.paused);
+        if let Some(hit) = target {
+            // Twelve thin opaque cuboids outline the selected block without
+            // covering its textured, masked or transparent surface.
+            let axis = edge.0 / 4;
+            let bits = edge.0 % 4;
+            let mut center = hit.cell.map(|value| value as f32);
+            let mut size = [0.014; 3];
+            size[axis] = 1.014;
+            center[axis] += 0.5;
+            center[(axis + 1) % 3] += (bits & 1) as f32;
+            center[(axis + 2) % 3] += ((bits >> 1) & 1) as f32;
+            visual.set_transform(Transform3d::new(
+                Vec3::new(center[0], center[1], center[2])?,
+                Rotation3d::IDENTITY,
+                Vec3::new(size[0], size[1], size[2])?,
+            )?)?;
+        }
+    }
+    Ok(())
+}
+
+fn camera(view: &mut View3d, local: &Local, session: &Session, settings: &Settings) -> LogicResult {
     let eye = session.game.player.eye();
     let forward = session.game.player.forward();
     view.set_pose(
@@ -123,7 +176,7 @@ pub fn present(
             eye[2] + forward[2],
         )?,
     )?;
-    view.set_enabled(ready);
+    view.set_enabled(local.phase == Phase::Ready);
     if settings.orthographic != view.orthographic_span().is_some() {
         if settings.orthographic {
             view.set_orthographic(
@@ -142,65 +195,5 @@ pub fn present(
     let (lighting, fog) = materials::environment(local.region)?;
     view.set_lighting(lighting);
     view.set_fog(settings.fog.then_some(fog));
-    let target = ready.then(|| session.game.target()).flatten();
-    let stamp = Stamp {
-        region: local.region,
-        phase: local.phase,
-        paused: local.paused,
-        counts: Block::SOLID.map(|block| session.game.inventory.count(block)),
-        selected: session.game.inventory.selected(),
-        target: target.map(|hit| (hit.cell, session.game.active_region().get(hit.cell))),
-        edits: session.edits,
-        rebuilt: local.rebuilt_chunks,
-    };
-    let changed = cache.stamp.as_ref() != Some(&stamp) || cache.notice != session.notice;
-    // Reuse one parsed face/plan for the changed HUD batch. Its borrow is local,
-    // not a self-referential World resource; unchanged frames construct none.
-    let font = fonts.at(layout);
-    let mut preparation = if changed {
-        Some(font.shaping_session()?)
-    } else {
-        None
-    };
-    for (label, mut visual) in &mut labels {
-        let (position, _) = layout.label(*label);
-        visual.set_position(position)?;
-        visual.set_font(font.clone())?;
-        if let Some(shaping) = preparation.as_mut() {
-            visual.set_text_with_session(shaping, &caption(*label, &stamp, &session.notice))?;
-        }
-    }
-    if changed {
-        cache.stamp = Some(stamp);
-        cache.notice.clone_from(&session.notice);
-    }
-    for (panel, mut visual) in &mut panels {
-        let [x, y, width, height] = layout.panel(*panel);
-        visual.set_geometry(
-            LogicalScreenPosition::new(x, y),
-            LogicalScreenVector::new(width, height),
-        )?;
-        visual.set_color(panel_color(*panel, &local, &session, input.pointer()))?;
-    }
-    for (edge, mut visual) in &mut outline {
-        visual.set_visible(target.is_some() && !local.paused);
-        if let Some(hit) = target {
-            // Twelve thin opaque cuboids form a true outline, not a solid
-            // replacement cube hiding the selected block's material.
-            let axis = edge.0 / 4;
-            let bits = edge.0 % 4;
-            let mut center = hit.cell.map(|value| value as f32);
-            let mut size = [0.014; 3];
-            size[axis] = 1.014;
-            center[axis] += 0.5;
-            center[(axis + 1) % 3] += (bits & 1) as f32;
-            center[(axis + 2) % 3] += ((bits >> 1) & 1) as f32;
-            visual.set_transform(Transform3d::new(
-                Vec3::new(center[0], center[1], center[2])?,
-                Rotation3d::IDENTITY,
-                Vec3::new(size[0], size[1], size[2])?,
-            )?)?;
-        }
-    }
     Ok(())
 }

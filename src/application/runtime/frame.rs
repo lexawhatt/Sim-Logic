@@ -50,6 +50,14 @@ impl<A: Action> HeadlessRunner<A> {
         }
         self.time = planned_time;
 
+        if request
+            .events()
+            .iter()
+            .any(|event| matches!(event, crate::input::InputEvent::FocusLost))
+        {
+            self.with_pointer_capture(crate::input::PointerCapture::release);
+        }
+
         let mut report = LogicFrameReport {
             frame_index: self.frame_index,
             timing,

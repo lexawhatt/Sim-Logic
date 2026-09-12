@@ -9,11 +9,12 @@ use sim_logic::{prelude::*, screen::ImageFilter};
 use super::{
     app::Action,
     model::{Block, RegionId},
+    projection::ChunkPart,
     scene::{Local, Phase},
     showcase::Showcase,
 };
 
-pub struct Palette(pub [TextureVisual3d; 5]);
+pub struct Palette(pub [TextureVisual3d; 32]);
 
 impl Palette {
     pub fn new() -> LogicResult<Self> {
@@ -23,18 +24,28 @@ impl Palette {
             for y in 0..16_u32 {
                 for x in 0..16_u32 {
                     let value = match block {
-                        Block::Wood => {
-                            if (x + y / 5) % 5 == 0 {
-                                155
-                            } else {
-                                245
-                            }
+                        Block::Wood | Block::OakPlanks | Block::DarkPlanks => {
+                            if (x + y / 5) % 5 == 0 { 155 } else { 245 }
                         }
-                        Block::Stone => {
+                        Block::Stone | Block::Cobblestone | Block::Bricks | Block::Sandstone => {
                             if x % 8 == 0 || y % 8 == 0 {
                                 165
                             } else {
                                 225 + ((x * 7 + y * 3) % 30) as u8
+                            }
+                        }
+                        Block::Glass | Block::BlueGlass | Block::Ice => {
+                            if x == 0 || y == 0 || x == 15 || y == 15 {
+                                245
+                            } else {
+                                180
+                            }
+                        }
+                        Block::Lamp => {
+                            if (x / 4 + y / 4) % 2 == 0 {
+                                255
+                            } else {
+                                190
                             }
                         }
                         _ => 210 + ((x * 13 + y * 7 + x * y) % 45) as u8,
@@ -57,7 +68,7 @@ impl Palette {
         Ok(Self(
             tiles
                 .try_into()
-                .map_err(|_| "five block textures required")?,
+                .map_err(|_| "complete block texture palette required")?,
         ))
     }
 
@@ -72,6 +83,7 @@ impl Palette {
 
 #[derive(Resource)]
 pub struct Settings {
+    pub studies: bool,
     pub lighting: bool,
     pub fog: bool,
     pub mipmaps: bool,
@@ -83,6 +95,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            studies: false,
             lighting: true,
             fog: true,
             mipmaps: true,
@@ -96,6 +109,14 @@ impl Default for Settings {
 impl Settings {
     pub fn handle_action(&mut self, action: Action) -> Option<&'static str> {
         match action {
+            Action::Studies => {
+                self.studies = !self.studies;
+                Some(if self.studies {
+                    "Renderer study panels shown [F4]."
+                } else {
+                    "Renderer study panels hidden [F4]."
+                })
+            }
             Action::Lighting => {
                 self.lighting = !self.lighting;
                 Some(if self.lighting {
@@ -121,6 +142,7 @@ impl Settings {
                 })
             }
             Action::TexturePatch => {
+                self.studies = true;
                 self.patch_requests = self.patch_requests.saturating_add(1);
                 Some("Patched the gray study board [T]; shared stone terrain stays unchanged.")
             }
@@ -141,14 +163,16 @@ pub fn surface(block: Block, shade: u8, settings: &Settings) -> LogicResult<Surf
     // Retain mild face tint for the Unlit comparison. Real illumination comes
     // from normals + the scene's directional light, not fake per-frame colors.
     let color = block.color(shade);
-    let surface = if block == Block::Leaves {
+    let surface = if block.translucent() {
+        SurfaceStyle3d::blend(Color::rgba(color.red(), color.green(), color.blue(), 0.38))?
+    } else if block == Block::Leaves {
         SurfaceStyle3d::mask(color, 0.5)?
     } else {
         SurfaceStyle3d::opaque(color)?
     };
     Ok(surface
         .with_sidedness(SurfaceSidedness3d::FrontOnly)
-        .with_lighting(if settings.lighting {
+        .with_lighting(if settings.lighting && block != Block::Lamp {
             SurfaceLighting3d::Lambert
         } else {
             SurfaceLighting3d::Unlit
@@ -183,14 +207,17 @@ pub fn environment(region: RegionId) -> LogicResult<(Lighting3d, Fog3d)> {
 pub fn apply(
     local: Res<Local>,
     mut settings: ResMut<Settings>,
-    mut visuals: Query<(Option<&Showcase>, &mut MeshVisual3d)>,
+    mut visuals: Query<(Option<&Showcase>, Option<&ChunkPart>, &mut MeshVisual3d)>,
 ) -> LogicResult {
     let current = (settings.lighting, settings.mipmaps);
     if local.phase != Phase::Ready || settings.applied == Some(current) {
         return Ok(());
     }
-    for (showcase, mut visual) in &mut visuals {
-        let illumination = if settings.lighting && showcase != Some(&Showcase::PaintedBoard) {
+    for (showcase, part, mut visual) in &mut visuals {
+        let illumination = if settings.lighting
+            && showcase != Some(&Showcase::PaintedBoard)
+            && part.is_none_or(|part| part.block != Block::Lamp)
+        {
             SurfaceLighting3d::Lambert
         } else {
             SurfaceLighting3d::Unlit

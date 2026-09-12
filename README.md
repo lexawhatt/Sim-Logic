@@ -2,7 +2,7 @@
 
 Sim;Logic is a code-first application layer for
 [Sim;Engine](https://github.com/lexawhatt/Sim-Engine), currently pinned to the
-`0.4.0-dev.4` Git candidate `1afbc7c5`. This is an integration preview, not a
+`0.4.0-dev.5` Git candidate `98b2c4d7`. This is an integration preview, not a
 published Engine 0.4 release.
 It keeps the program in ordinary Rust, but supplies the pieces that otherwise
 have to be rebuilt for every interactive simulation: entities and components, ordered systems, typed
@@ -18,10 +18,11 @@ headless example and a plain-language explanation of the runtime.
 
 ## Build in Twin Fields
 
-A small voxel sandbox with two regions, block building, collision, a hotbar
-and save/load. Your edits and inventory survive travel between Worlds:
+A creative voxel sandbox with two streamed regions, 32 blocks, a nine-slot
+hotbar, collision, flight and save/load. Builds survive chunk unloading and
+travel between Worlds.
 
-The dev.4 version explicitly uses Engine's Native surface policy for its free
+The game explicitly uses Engine's Native surface policy for its free
 camera. It also exercises textures, material transparency, lighting and fog.
 The [game guide](DOCUMENTATION/examples/Voxel-Sandbox.md#renderer-limitation)
 explains the remaining limitations; this is still an integration prototype.
@@ -30,8 +31,10 @@ explains the remaining limitations; this is still an integration prototype.
 cargo run --release --features text --example voxel_sandbox
 ```
 
-WASD moves, arrows or middle-drag look, Space jumps. Left click breaks the
-target block; right click places it. N travels, P pauses, and F5/F9 save/load.
+Click to capture the mouse; WASD moves and Space jumps. Double Space toggles
+flight, then Space/Left Shift rise/descend. Left/right click break/build.
+E or F5 opens the inventory, F3 shows diagnostics, Escape opens the menu.
+N travels; F7/F9 save/load.
 See the [Twin Fields guide](DOCUMENTATION/examples/Voxel-Sandbox.md) for all
 controls and the distinction between game rules, Logic and Engine rendering.
 
@@ -99,10 +102,12 @@ The first experimental slice can:
 - let systems return `Result` and stop their stage with a reported error;
 - pass bounded typed events between ordered systems in one stage invocation;
 - keep explicitly registered typed Application Resources across World replacement;
-- map W/A/S/D, P/R/N, digits 1-5, arrows, Space, Enter, Escape, and
-  F3/F4/F5/F6/F8/F9 to application-defined actions;
+- map W/A/S/D, P/R/N, E/L/F/M/T/V, digits 1-9, arrows, Space, Left Shift,
+  Enter, Escape, and F3-F9 to application-defined actions;
 - map left, right, and middle mouse buttons to actions with click-time pointer
   samples and explicit screen-to-world coordinate conversion;
+- request optional desktop mouse capture, inspect its actual status, and
+  consume bounded frame-only relative motion with explicit focus-loss boundaries;
 - keep each input edge's physical key or mouse button, and distinguish an
   ordinary release from cancellation on pointer leave or focus loss;
 - track an explicitly routed mouse-button gesture, confirm only eligible

@@ -268,6 +268,15 @@ impl ApplicationResourceRegistry {
             .get_resource::<StoredApplicationResource<T>>()
             .map(|resource| &resource.0)
     }
+
+    pub(crate) fn with_mut<T: Send + Sync + 'static, R>(
+        &self,
+        world: &mut World,
+        update: impl FnOnce(&mut T) -> R,
+    ) -> Option<R> {
+        let mut resource = world.get_resource_mut::<StoredApplicationResource<T>>()?;
+        Some(update(&mut resource.0))
+    }
 }
 
 fn contains<T: Send + Sync + 'static>(world: &World) -> bool {

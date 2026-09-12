@@ -52,6 +52,7 @@ fn flat_game() -> SaveGame {
         active: RegionId::Meadow,
         player,
         inventory: Inventory::default(),
+        creative: false,
         seed: 7,
         regions: [region.clone(), region],
         parked_players: [player; 2],
@@ -63,13 +64,16 @@ fn deterministic_regions_are_distinct_and_both_spawns_are_clear() {
     let first = SaveGame::new(42);
     let second = SaveGame::new(42);
     for id in RegionId::ALL {
-        assert_eq!(first.region(id).blocks, second.region(id).blocks);
+        assert_eq!(
+            first.region(id).bootstrap_blocks(),
+            second.region(id).bootstrap_blocks()
+        );
         assert!(first.region(id).spawn().valid(first.region(id)));
         assert!(first.region(id).solid_count() < terrain::CELL_COUNT);
     }
     assert_ne!(
-        first.region(RegionId::Meadow).blocks,
-        first.region(RegionId::Canyon).blocks
+        first.region(RegionId::Meadow).bootstrap_blocks(),
+        first.region(RegionId::Canyon).bootstrap_blocks()
     );
 }
 
@@ -199,7 +203,7 @@ fn generated_chunk_meshes_have_bounded_valid_topology() {
     for id in RegionId::ALL {
         for chunk in 0..CHUNK_COUNT {
             let parts = game.region(id).chunk_meshes(chunk).unwrap();
-            assert!(parts.len() <= 15);
+            assert!(parts.len() <= Block::SOLID.len() * 3);
             assert!(
                 parts
                     .iter()
@@ -367,13 +371,13 @@ fn rejected_edits_preserve_inventory_and_terrain() {
     game.regions[0].set([12, 2, 9], Block::Wood);
     game.inventory.counts[Block::Wood as usize - 1] = Inventory::CAPACITY;
     let inventory = game.inventory.clone();
-    let blocks = game.active_region().blocks.clone();
+    let blocks = game.active_region().bootstrap_blocks();
     assert_eq!(game.break_target(), Err(EditError::InventoryFull));
     assert_eq!(game.inventory, inventory);
-    assert_eq!(game.active_region().blocks, blocks);
+    assert_eq!(game.active_region().bootstrap_blocks(), blocks);
     game.inventory.counts[0] = 0;
     assert_eq!(game.place_target(), Err(EditError::InventoryEmpty));
-    assert_eq!(game.active_region().blocks, blocks);
+    assert_eq!(game.active_region().bootstrap_blocks(), blocks);
     game.player.pitch = -1.45;
     assert_eq!(game.break_target(), Err(EditError::Bedrock));
 }
@@ -400,13 +404,16 @@ fn save_roundtrip_keeps_both_regions_and_rejects_corruption() {
     original.travel(RegionId::Canyon);
     original.inventory.select(Block::Sand);
     let bytes = original.encode().unwrap();
-    assert_eq!(bytes.len(), storage::SAVE_BYTES);
+    assert_eq!(bytes.len(), storage::FIXED_BYTES + 26);
     let restored = SaveGame::decode(&bytes).unwrap();
     assert_eq!(restored.active, RegionId::Canyon);
     assert_eq!(restored.inventory, original.inventory);
     assert_eq!(restored.player.position, original.player.position);
     for id in RegionId::ALL {
-        assert_eq!(restored.region(id).blocks, original.region(id).blocks);
+        assert_eq!(
+            restored.region(id).bootstrap_blocks(),
+            original.region(id).bootstrap_blocks()
+        );
     }
     let mut corrupt = bytes.clone();
     corrupt[100] ^= 0x80;
@@ -420,7 +427,7 @@ fn save_roundtrip_keeps_both_regions_and_rejects_corruption() {
 #[test]
 fn valid_checksum_does_not_bypass_payload_validation() {
     let original = SaveGame::new(1).encode().unwrap();
-    for (offset, replacement) in [(16, 2), (17, 0), (68, 0), (69, 250)] {
+    for (offset, replacement) in [(16, 2), (17, 2), (18, 9), (19, 31), (20, 0), (21, 250)] {
         let mut bytes = original.clone();
         bytes[offset] = replacement;
         let end = bytes.len() - 8;
@@ -429,7 +436,7 @@ fn valid_checksum_does_not_bypass_payload_validation() {
         assert!(SaveGame::decode(&bytes).is_err());
     }
     let mut bytes = original;
-    bytes[28..32].copy_from_slice(&f32::NAN.to_le_bytes());
+    bytes[93..97].copy_from_slice(&f32::NAN.to_le_bytes());
     let end = bytes.len() - 8;
     let checksum = storage::checksum(&bytes[..end]);
     bytes[end..].copy_from_slice(&checksum.to_le_bytes());

@@ -19,6 +19,8 @@ use crate::input::{InputEvent, MouseButton, PointerSample};
 /// stops before the invalid geometry reaches a logical frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DesktopPointerError {
+    /// Raw relative motion or its coalesced displacement exceeded its bounds.
+    RelativeMotion(crate::input::RelativePointerMotionError),
     /// The display scale cannot support Sim;Engine's logical pixel conversion.
     InvalidScaleFactor {
         /// Rejected physical pixels per logical pixel.
@@ -41,6 +43,9 @@ pub enum DesktopPointerError {
 impl fmt::Display for DesktopPointerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RelativeMotion(error) => {
+                write!(formatter, "invalid relative pointer motion: {error}")
+            }
             Self::InvalidScaleFactor { scale_factor } => {
                 write!(formatter, "invalid pointer display scale {scale_factor}")
             }
@@ -56,6 +61,7 @@ impl fmt::Display for DesktopPointerError {
 impl Error for DesktopPointerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::RelativeMotion(error) => Some(error),
             Self::LogicalViewport(error) => Some(error),
             Self::InvalidScaleFactor { .. } | Self::InvalidPosition { .. } => None,
         }

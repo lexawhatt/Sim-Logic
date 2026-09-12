@@ -6,6 +6,8 @@
 //! keyboard events and repeated presses are ignored; returning to the window
 //! requires a fresh physical press before a key becomes held again.
 
+#[path = "desktop/capture.rs"]
+mod capture;
 #[path = "desktop/images.rs"]
 mod images;
 #[path = "desktop/pointer.rs"]
@@ -38,7 +40,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
-    event::{ElementState, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -52,13 +54,14 @@ use crate::{
     },
     identity::{WorldFactoryId, WorldGeneration},
     input::{
-        Action, ButtonState, InputEvent, PhysicalKeyCode, SUPPORTED_PHYSICAL_KEY_COUNT,
-        physical_key_index,
+        Action, ButtonState, InputEvent, PhysicalKeyCode, PointerCapture, RelativePointerMotion,
+        RelativePointerMotionError, SUPPORTED_PHYSICAL_KEY_COUNT, physical_key_index,
     },
     render::FrameLimits,
     three_d::ThreeDRenderLimits,
 };
 
+use capture::DesktopCapture;
 use images::{DesktopImages, ScreenPresentationError};
 use pointer::DesktopPointerGeometry;
 use three_d::DesktopThreeD;
@@ -531,6 +534,7 @@ struct DesktopHost<A: Action> {
     input_failure: Option<InputBufferFailure>,
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
     pointer_geometry: DesktopPointerGeometry,
+    capture: DesktopCapture,
     window_occluded: bool,
     surface_waiting: bool,
     last_frame: Instant,
@@ -560,6 +564,7 @@ impl<A: Action> DesktopHost<A> {
             input_failure: None,
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
             pointer_geometry: DesktopPointerGeometry::empty(),
+            capture: DesktopCapture::new(),
             window_occluded: false,
             surface_waiting: false,
             last_frame: Instant::now(),
@@ -569,10 +574,55 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn stop(&mut self, event_loop: &ActiveEventLoop, error: DesktopRunError) {
+        self.release_capture();
         if self.fatal.is_none() {
             self.fatal = Some(error);
         }
         event_loop.exit();
+    }
+
+    fn release_capture(&mut self) {
+        let status = self.capture.release();
+        self.runner.with_pointer_capture(|capture| {
+            capture.release();
+            capture.acknowledge(status);
+        });
+    }
+
+    fn synchronize_capture(&mut self) {
+        if self
+            .runner
+            .app_resource::<PointerCapture>()
+            .is_some_and(PointerCapture::pending)
+        {
+            let was_captured = self.capture.accepts_motion();
+            let backend = &mut self.capture;
+            self.runner
+                .with_pointer_capture(|capture| backend.synchronize(capture));
+            self.collect_capture_change(was_captured, self.capture.accepts_motion());
+        }
+    }
+
+    fn collect_capture_change(&mut self, was_captured: bool, captured: bool) {
+        // Captured CursorMoved events were deliberately not sent to UI. After
+        // changing ownership, the old absolute sample cannot describe the newly
+        // visible pointer. Queue the boundary before any later click and wait
+        // for fresh CursorMoved; also cancel an unfinished mouse gesture.
+        // synchronize_capture runs after the preceding frame queue was drained.
+        // Focus loss has its own single FocusLost boundary instead.
+        if was_captured != captured && self.collect_input(InputEvent::PointerLeft) {
+            self.pointer_geometry.cursor_left();
+        }
+    }
+
+    fn collect_relative_motion(&mut self, delta: (f64, f64)) -> Result<(), DesktopPointerError> {
+        if !self.capture.accepts_motion() || self.input_failure.is_some() {
+            return Ok(());
+        }
+        let motion = RelativePointerMotion::new(delta.0, delta.1)
+            .map_err(DesktopPointerError::RelativeMotion)?;
+        self.collect_input(InputEvent::relative_pointer_motion(motion));
+        Ok(())
     }
 
     fn collect_gpu_timings(&mut self) {
@@ -611,6 +661,19 @@ impl<A: Action> DesktopHost<A> {
         if self.input_failure.is_some() {
             return false;
         }
+        if let InputEvent::RelativePointerMotion { motion } = event
+            && let Some(InputEvent::RelativePointerMotion { motion: previous }) =
+                self.pending_events.last_mut()
+        {
+            match previous.checked_add(motion) {
+                Ok(sum) => *previous = sum,
+                Err(error) => {
+                    self.input_failure = Some(InputBufferFailure::RelativeMotion(error));
+                    return false;
+                }
+            }
+            return true;
+        }
         // Only the trailing continuous sample is replaceable. A key, button,
         // or leave event keeps all preceding pointer geometry causal.
         if matches!(event, InputEvent::PointerMoved { .. })
@@ -635,7 +698,7 @@ impl<A: Action> DesktopHost<A> {
         &mut self,
         position: PhysicalPosition<f64>,
     ) -> Result<(), DesktopPointerError> {
-        if self.input_failure.is_some() {
+        if self.input_failure.is_some() || self.capture.accepts_motion() {
             return Ok(());
         }
         let mut geometry = self.pointer_geometry;
@@ -653,6 +716,9 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn collect_pointer_left(&mut self) {
+        if self.capture.accepts_motion() {
+            return;
+        }
         if self.collect_input(InputEvent::PointerLeft) {
             self.pointer_geometry.cursor_left();
         }
@@ -687,6 +753,8 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn collect_focus_loss(&mut self) {
+        self.capture.set_focused(false);
+        self.release_capture();
         // The shared core owns cancellation expansion and its exact ordered
         // edge preflight. Queue one boundary, not a partially accepted batch
         // of ordinary releases that could accidentally complete user actions.
@@ -697,7 +765,7 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
-        if self.fatal.is_some() {
+        if !callback_may_run(self.fatal.is_some(), event_loop.exiting()) {
             return;
         }
         // Service ready timestamps even when input, occlusion or an application
@@ -709,6 +777,9 @@ impl<A: Action> DesktopHost<A> {
                     limit: self.input_event_limit,
                 },
                 InputBufferFailure::Allocation => DesktopRunError::InputBufferAllocationFailed,
+                InputBufferFailure::RelativeMotion(error) => {
+                    DesktopRunError::Pointer(DesktopPointerError::RelativeMotion(error))
+                }
             };
             self.stop(event_loop, error);
             return;
@@ -740,6 +811,7 @@ impl<A: Action> DesktopHost<A> {
             }
             FrameOutcome::Advanced(report) => report,
         };
+        self.synchronize_capture();
         self.report.logic_frames = self.report.logic_frames.saturating_add(1);
         if matches!(report.transition(), FrameTransition::Committed { .. }) {
             self.report.committed_transitions = self.report.committed_transitions.saturating_add(1);
@@ -778,6 +850,7 @@ impl<A: Action> DesktopHost<A> {
                 return;
             }
             PresentationDecision::ApplicationExit => {
+                self.release_capture();
                 self.report.record_application_exit(report);
                 event_loop.exit();
                 return;
@@ -1014,7 +1087,7 @@ impl<A: Action> DesktopHost<A> {
 
 impl<A: Action> ApplicationHandler for DesktopHost<A> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.fatal.is_some() || self.window.is_some() {
+        if !callback_may_run(self.fatal.is_some(), event_loop.exiting()) || self.window.is_some() {
             return;
         }
         let attributes = Window::default_attributes()
@@ -1066,6 +1139,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             .reset(0, renderer.gpu_timing_statistics());
         self.window_occluded = extent_is_occluded(size.width, size.height);
         self.last_frame = Instant::now();
+        self.capture.attach(Arc::clone(&window));
         self.window = Some(window);
         self.images.clear();
         self.three_d.clear();
@@ -1078,9 +1152,9 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Exit requests need not discard platform callbacks already queued.
-        // A failed geometry conversion must never be followed by another frame.
-        if self.fatal.is_some() {
+        // Winit may deliver already queued input/redraw after exit(). Neither
+        // closing nor a failure permits another logical frame or cursor grab.
+        if !callback_may_run(self.fatal.is_some(), event_loop.exiting()) {
             return;
         }
         let Some(window) = self.window.as_ref() else {
@@ -1091,7 +1165,10 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         }
 
         match event {
-            WindowEvent::CloseRequested | WindowEvent::Destroyed => event_loop.exit(),
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                self.release_capture();
+                event_loop.exit();
+            }
             WindowEvent::KeyboardInput {
                 event,
                 is_synthetic,
@@ -1107,7 +1184,10 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             }
             WindowEvent::CursorLeft { .. } => self.collect_pointer_left(),
             WindowEvent::Focused(false) => self.collect_focus_loss(),
-            WindowEvent::Focused(true) => self.surface_waiting = false,
+            WindowEvent::Focused(true) => {
+                self.capture.set_focused(true);
+                self.surface_waiting = false;
+            }
             WindowEvent::Resized(size) => {
                 if let Err(error) = self.collect_resize(size) {
                     self.stop(event_loop, DesktopRunError::Pointer(error));
@@ -1148,15 +1228,38 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if !self.window_occluded
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if callback_may_run(self.fatal.is_some(), event_loop.exiting())
+            && !self.window_occluded
             && !self.surface_waiting
-            && self.fatal.is_none()
             && let Some(window) = self.window.as_ref()
         {
             window.request_redraw();
         }
     }
+
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if !callback_may_run(self.fatal.is_some(), event_loop.exiting()) {
+            return;
+        }
+        if let DeviceEvent::MouseMotion { delta } = event
+            && let Err(error) = self.collect_relative_motion(delta)
+        {
+            self.stop(event_loop, DesktopRunError::Pointer(error));
+        }
+    }
+
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        if callback_may_run(self.fatal.is_some(), event_loop.exiting()) {
+            self.collect_focus_loss();
+        }
+    }
+}
+
+/// All host callbacks share the same terminal guard. An OS close and an
+/// application-requested exit are terminal even when no fatal error was stored.
+const fn callback_may_run(failed: bool, exiting: bool) -> bool {
+    !failed && !exiting
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1254,6 +1357,7 @@ const fn extent_is_occluded(width: u32, height: u32) -> bool {
 enum InputBufferFailure {
     Limit,
     Allocation,
+    RelativeMotion(RelativePointerMotionError),
 }
 
 fn present_extracted(
@@ -1318,6 +1422,13 @@ fn map_key(key: PhysicalKey) -> Option<PhysicalKeyCode> {
         PhysicalKey::Code(KeyCode::KeyM) => Some(PhysicalKeyCode::KeyM),
         PhysicalKey::Code(KeyCode::KeyT) => Some(PhysicalKeyCode::KeyT),
         PhysicalKey::Code(KeyCode::KeyV) => Some(PhysicalKeyCode::KeyV),
+        PhysicalKey::Code(KeyCode::Digit6) => Some(PhysicalKeyCode::Digit6),
+        PhysicalKey::Code(KeyCode::Digit7) => Some(PhysicalKeyCode::Digit7),
+        PhysicalKey::Code(KeyCode::Digit8) => Some(PhysicalKeyCode::Digit8),
+        PhysicalKey::Code(KeyCode::Digit9) => Some(PhysicalKeyCode::Digit9),
+        PhysicalKey::Code(KeyCode::F7) => Some(PhysicalKeyCode::F7),
+        PhysicalKey::Code(KeyCode::KeyE) => Some(PhysicalKeyCode::KeyE),
+        PhysicalKey::Code(KeyCode::ShiftLeft) => Some(PhysicalKeyCode::ShiftLeft),
         PhysicalKey::Code(_) | PhysicalKey::Unidentified(_) => None,
     }
 }
@@ -1533,6 +1644,13 @@ mod tests {
             (KeyCode::KeyM, PhysicalKeyCode::KeyM),
             (KeyCode::KeyT, PhysicalKeyCode::KeyT),
             (KeyCode::KeyV, PhysicalKeyCode::KeyV),
+            (KeyCode::Digit6, PhysicalKeyCode::Digit6),
+            (KeyCode::Digit7, PhysicalKeyCode::Digit7),
+            (KeyCode::Digit8, PhysicalKeyCode::Digit8),
+            (KeyCode::Digit9, PhysicalKeyCode::Digit9),
+            (KeyCode::F7, PhysicalKeyCode::F7),
+            (KeyCode::KeyE, PhysicalKeyCode::KeyE),
+            (KeyCode::ShiftLeft, PhysicalKeyCode::ShiftLeft),
         ];
 
         assert_eq!(mappings.map(|(_, portable)| portable), ALL_PHYSICAL_KEYS);
@@ -1548,6 +1666,20 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn terminal_callbacks_cannot_run_after_close_or_failure() {
+        assert!(callback_may_run(false, false));
+        assert!(
+            !callback_may_run(false, true),
+            "normal exit has no fatal error"
+        );
+        assert!(
+            !callback_may_run(true, false),
+            "failure stops before exit dispatch"
+        );
+        assert!(!callback_may_run(true, true));
     }
 
     #[test]

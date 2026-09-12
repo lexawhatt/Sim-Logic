@@ -19,3 +19,9 @@ mod view;
 
 #[path = "voxel_sandbox/runtime.rs"]
 mod runtime;
+
+#[path = "voxel_sandbox/interface.rs"]
+mod interface;
+
+#[path = "voxel_sandbox/ui_retry.rs"]
+mod ui_retry;

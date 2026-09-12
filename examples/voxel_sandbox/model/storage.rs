@@ -6,10 +6,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{Block, Inventory, Player, Region, RegionId, SaveGame, terrain::CELL_COUNT};
+use super::{Block, Inventory, Player, Region, RegionId, SaveGame, terrain::MAX_EDITS};
 
-const MAGIC: &[u8; 8] = b"SVXLS001";
-pub(super) const SAVE_BYTES: usize = 8 + 8 + 2 + 10 + 40 + 2 * CELL_COUNT + 8;
+const MAGIC: &[u8; 8] = b"SVXLS002";
+pub(super) const FIXED_BYTES: usize = 8 + 8 + 4 + 9 + 64 + 40 + 8 + 8;
+pub(super) const MAX_SAVE_BYTES: usize = FIXED_BYTES + 2 * MAX_EDITS * 13;
 
 #[derive(Debug)]
 pub enum SaveError {
@@ -47,6 +48,25 @@ impl SaveGame {
     /// preserve the old destination. The containing directory is not fsynced.
     /// A conflicting temporary file is never deleted or overwritten.
     pub fn save(&self, path: &Path) -> Result<(), SaveError> {
+        // A supplied old save path is not implicit permission to destroy data
+        // this version cannot load. Use the separate v2 filename instead.
+        match File::open(path) {
+            Ok(mut existing) => {
+                let mut prefix = [0; 8];
+                match existing.read_exact(&mut prefix) {
+                    Ok(()) if &prefix == b"SVXLS001" => {
+                        return Err(SaveError::Invalid(
+                            "legacy save preserved; choose a new v2 filename",
+                        ));
+                    }
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let bytes = self.encode()?;
         let name = path
             .file_name()
@@ -70,12 +90,13 @@ impl SaveGame {
         Ok(())
     }
 
-    /// Read at most the exact versioned size plus one byte. Invalid or oversized
+    /// Read at most the maximum versioned size plus one byte. Invalid or oversized
     /// input never changes a running game; the caller decides when to install it.
     pub fn load(path: &Path) -> Result<Self, SaveError> {
         let file = File::open(path)?;
-        let mut bytes = Vec::with_capacity(SAVE_BYTES + 1);
-        file.take((SAVE_BYTES + 1) as u64).read_to_end(&mut bytes)?;
+        let mut bytes = Vec::with_capacity(MAX_SAVE_BYTES + 1);
+        file.take((MAX_SAVE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
         Self::decode(&bytes)
     }
 
@@ -83,11 +104,22 @@ impl SaveGame {
         let mut players = self.parked_players;
         players[self.active.index()] = self.player;
         validate(&self.regions, &players, &self.inventory)?;
-        let mut bytes = Vec::with_capacity(SAVE_BYTES);
+        let size = FIXED_BYTES
+            + self
+                .regions
+                .iter()
+                .map(|region| region.edits.len() * 13)
+                .sum::<usize>();
+        let mut bytes = Vec::with_capacity(size);
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&self.seed.to_le_bytes());
-        bytes.push(self.active.index() as u8);
-        bytes.push(self.inventory.selected as u8);
+        bytes.extend_from_slice(&[
+            self.active.index() as u8,
+            u8::from(self.creative),
+            self.inventory.selected_slot as u8,
+            Block::SOLID.len() as u8,
+        ]);
+        bytes.extend(self.inventory.hotbar.map(|block| block as u8));
         for count in self.inventory.counts {
             bytes.extend_from_slice(&count.to_le_bytes());
         }
@@ -100,21 +132,35 @@ impl SaveGame {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
-        for region in &self.regions {
-            bytes.extend(region.blocks.iter().map(|block| *block as u8));
+        for (id, region) in RegionId::ALL.into_iter().zip(&self.regions) {
+            if region.seed != self.seed || region.kind != id {
+                return Err(SaveError::Invalid("region generation descriptor mismatch"));
+            }
+            bytes.extend_from_slice(&(region.edits.len() as u32).to_le_bytes());
+            for (cell, block) in &region.edits {
+                for coordinate in cell {
+                    bytes.extend_from_slice(&coordinate.to_le_bytes());
+                }
+                bytes.push(*block as u8);
+            }
         }
         bytes.extend_from_slice(&checksum(&bytes).to_le_bytes());
         Ok(bytes)
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self, SaveError> {
-        if bytes.len() != SAVE_BYTES {
+        if bytes.get(..8) == Some(b"SVXLS001") {
+            return Err(SaveError::Invalid(
+                "legacy finite-world save is unsupported; keep the original file and open it with the previous example",
+            ));
+        }
+        if bytes.len() < FIXED_BYTES || bytes.len() > MAX_SAVE_BYTES {
             return Err(SaveError::Invalid("unexpected byte count"));
         }
         if &bytes[..8] != MAGIC {
             return Err(SaveError::Invalid("unknown format version"));
         }
-        let (body, stored_checksum) = bytes.split_at(SAVE_BYTES - 8);
+        let (body, stored_checksum) = bytes.split_at(bytes.len() - 8);
         if stored_checksum != checksum(body).to_le_bytes() {
             return Err(SaveError::Invalid("checksum mismatch"));
         }
@@ -128,14 +174,30 @@ impl SaveGame {
             1 => RegionId::Canyon,
             _ => return Err(SaveError::Invalid("unknown region")),
         };
-        let selected = Block::from_byte(cursor.take::<1>()?[0])
-            .filter(|block| block.solid())
-            .ok_or(SaveError::Invalid("unknown selected block"))?;
-        let mut counts = [0; 5];
+        let creative = match cursor.take::<1>()?[0] {
+            0 => false,
+            1 => true,
+            _ => return Err(SaveError::Invalid("unknown creative flag")),
+        };
+        let selected_slot = cursor.take::<1>()?[0] as usize;
+        if cursor.take::<1>()?[0] as usize != Block::SOLID.len() {
+            return Err(SaveError::Invalid("unsupported block palette"));
+        }
+        let mut hotbar = [Block::Grass; 9];
+        for block in &mut hotbar {
+            *block = Block::from_byte(cursor.take::<1>()?[0])
+                .filter(|block| block.solid())
+                .ok_or(SaveError::Invalid("unknown hotbar block"))?;
+        }
+        let mut counts = [0; 32];
         for count in &mut counts {
             *count = u16::from_le_bytes(cursor.take()?);
         }
-        let inventory = Inventory { counts, selected };
+        let inventory = Inventory {
+            counts,
+            hotbar,
+            selected_slot,
+        };
         let mut parked_players = [Player::at([0.0; 3]); 2];
         for player in &mut parked_players {
             for value in &mut player.position {
@@ -144,25 +206,50 @@ impl SaveGame {
             player.yaw = f32::from_le_bytes(cursor.take()?);
             player.pitch = f32::from_le_bytes(cursor.take()?);
         }
-        let mut decoded = Vec::with_capacity(2);
-        for _ in 0..2 {
-            let mut blocks = Vec::with_capacity(CELL_COUNT);
-            for _ in 0..CELL_COUNT {
-                blocks.push(
-                    Block::from_byte(cursor.take::<1>()?[0])
-                        .ok_or(SaveError::Invalid("unknown terrain block"))?,
-                );
+        let mut regions = [
+            Region::generated(RegionId::Meadow, seed),
+            Region::generated(RegionId::Canyon, seed),
+        ];
+        for region in &mut regions {
+            let count = u32::from_le_bytes(cursor.take()?) as usize;
+            if count > MAX_EDITS {
+                return Err(SaveError::Invalid("region edit limit exceeded"));
             }
-            decoded.push(Region::from_blocks(blocks));
+            let mut previous = None;
+            for _ in 0..count {
+                let cell = [
+                    i32::from_le_bytes(cursor.take()?),
+                    i32::from_le_bytes(cursor.take()?),
+                    i32::from_le_bytes(cursor.take()?),
+                ];
+                let block = Block::from_byte(cursor.take::<1>()?[0])
+                    .ok_or(SaveError::Invalid("unknown edited block"))?;
+                if !Region::contains(cell) || cell[1] == 0 {
+                    return Err(SaveError::Invalid(
+                        "edited cell outside bounds or on bedrock",
+                    ));
+                }
+                if previous.is_some_and(|old| old >= cell) || block == region.base(cell) {
+                    return Err(SaveError::Invalid(
+                        "noncanonical or duplicate terrain edits",
+                    ));
+                }
+                region.edits.insert(cell, block);
+                previous = Some(cell);
+            }
+            region
+                .refresh_cache()
+                .map_err(|_| SaveError::Invalid("terrain revision limit"))?;
         }
-        let regions: [Region; 2] = decoded
-            .try_into()
-            .map_err(|_| SaveError::Invalid("region count"))?;
+        if cursor.offset != body.len() {
+            return Err(SaveError::Invalid("trailing save fields"));
+        }
         validate(&regions, &parked_players, &inventory)?;
         Ok(Self {
             active,
             player: parked_players[active.index()],
             inventory,
+            creative,
             seed,
             regions,
             parked_players,
@@ -179,20 +266,18 @@ fn validate(
         .counts
         .into_iter()
         .any(|count| count > Inventory::CAPACITY)
-        || !inventory.selected.solid()
+        || inventory.selected_slot >= 9
+        || inventory.hotbar.iter().any(|block| !block.solid())
     {
         return Err(SaveError::Invalid("inventory exceeds its limits"));
     }
     for (region, player) in regions.iter().zip(players) {
-        if region.blocks.len() != CELL_COUNT {
-            return Err(SaveError::Invalid("terrain dimensions"));
-        }
-        for z in 0..super::WIDTH {
-            for x in 0..super::WIDTH {
-                if region.get([x, 0, z]) != Block::Stone {
-                    return Err(SaveError::Invalid("missing bedrock"));
-                }
-            }
+        if region.edits.len() > MAX_EDITS
+            || region.edits.iter().any(|(cell, block)| {
+                !Region::contains(*cell) || cell[1] == 0 || *block == region.base(*cell)
+            })
+        {
+            return Err(SaveError::Invalid("invalid sparse terrain edits"));
         }
         if !player.valid(region) {
             return Err(SaveError::Invalid(

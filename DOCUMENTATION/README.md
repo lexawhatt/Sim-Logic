@@ -32,7 +32,7 @@ a desktop example to testing the same application without a window.
 
 ## Example applications
 
-- [Twin Fields](examples/Voxel-Sandbox.md): a voxel building sandbox with two persistent regions.
+- [Twin Fields](examples/Voxel-Sandbox.md): two streamed worlds, 32-block inventory, creative flight and F3 diagnostics.
 - [Frontier](examples/Territory-Wars.md): territory conquest, bots, separate game rules, and a mechanics inspector.
 - [Iron Maze](examples/Iron-Maze.md): a small 2.5D shooter.
 - [Piano roll](examples/Piano-Roll.md): editing, synthesized sound and a 2D/3D piano.
@@ -57,9 +57,9 @@ There is one active World and one desktop window. Systems run sequentially;
 World factories are synchronous and take no runtime payload. Behavior sugar,
 an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
-pointer buttons have no global focus or OS capture, audio is not a World-owned voice service,
+pointer buttons have no global routing focus (OS capture is a separate explicit service), audio is not a World-owned voice service,
 and 3D accepts host-built textured meshes but supplies no model-file importer.
-The current Engine dependency is an exact `0.4.0-dev.4` Git revision, not a
+The current Engine dependency is an exact `0.4.0-dev.5` Git revision, not a
 registry release. Its new capabilities are under consumer integration testing.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been

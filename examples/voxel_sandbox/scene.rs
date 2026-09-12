@@ -4,7 +4,7 @@ use super::{
     materials::{self, Palette, Settings},
     model::{Movement, RegionId},
     showcase::{self, Showcase},
-    view::{self, Button, Label, Layout, Panel},
+    view::{self, Button, Label, Layout, Menu, Panel},
 };
 use sim_logic::{prelude::*, three_d::ThreeDSurfacePolicy};
 
@@ -27,8 +27,15 @@ pub struct Local {
     pub middle_drag: bool,
     pub departing: bool,
     pub paused: bool,
+    pub pause_pending: bool,
+    pub menu: Menu,
+    pub debug: bool,
+    pub flying: bool,
+    pub flight_vertical: f32,
+    pub input_time: std::time::Duration,
+    pub last_jump: Option<std::time::Duration>,
     pub projected_epoch: u64,
-    pub chunk_revisions: [u64; super::model::CHUNK_COUNT],
+    pub chunk_revisions: Vec<(usize, u64)>,
     pub rebuilt_chunks: u64,
 }
 
@@ -48,37 +55,8 @@ pub struct Recipe {
 impl Recipe {
     pub fn new(region: RegionId, font: &TextFont, palette: &Palette) -> LogicResult<Self> {
         let layout = Layout::new(LogicalViewport::new(1100.0, 720.0)?);
-        let mut panels = Vec::new();
-        for panel in [
-            Panel::Header,
-            Panel::Footer,
-            Panel::CrossHorizontal,
-            Panel::CrossVertical,
-        ]
-        .into_iter()
-        .chain(view::BUTTONS.map(Panel::Button))
-        {
-            panels.push((
-                panel,
-                view::rectangle(panel, layout, Color::rgb8(22, 31, 43))?,
-            ));
-        }
-        let mut labels = Vec::new();
-        for (label, caption) in [
-            (Label::Title, "TWIN FIELDS / Sim;Logic"),
-            (Label::Status, "Preparing saved region..."),
-            (
-                Label::Help,
-                "WASD move / Arrows or middle-drag look / Space jump / LMB break / RMB build",
-            ),
-            (Label::Notice, "Loading terrain..."),
-            (Label::Target, ""),
-        ]
-        .into_iter()
-        .chain(view::BUTTONS.map(|button| (Label::Button(button), "...")))
-        {
-            labels.push((label, view::text(font, label, caption, layout)?));
-        }
+        let panels = view::panels(layout)?;
+        let labels = view::labels(font, layout)?;
         let mut view = View3d::new(Vec3::new(12.5, 7.0, 12.5)?, Vec3::new(12.5, 5.0, 8.5)?)?;
         // Filled voxel surfaces need ordinary hardware clipping for arbitrary
         // player poses. The library's strict scientific default is unchanged.
@@ -137,8 +115,15 @@ impl Recipe {
             middle_drag: false,
             departing: false,
             paused: false,
+            pause_pending: false,
+            menu: Menu::None,
+            debug: false,
+            flying: false,
+            flight_vertical: 0.0,
+            input_time: std::time::Duration::ZERO,
+            last_jump: None,
             projected_epoch: 0,
-            chunk_revisions: [0; super::model::CHUNK_COUNT],
+            chunk_revisions: Vec::new(),
             rebuilt_chunks: 0,
         })?;
         Ok(())

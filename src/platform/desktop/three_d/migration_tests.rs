@@ -147,6 +147,31 @@ fn texture_allowance_includes_engine_mip_recovery_and_transparent_backgrounds() 
 }
 
 #[test]
+fn engine_background_mutation_preserves_environment_budget_and_rejected_color() {
+    let budget = engine_scene_budget(ThreeDRenderLimits::new(12, 144, 640 * 360)).unwrap();
+    let mut scene = Scene3d::with_budget(Color::BLACK, budget).unwrap();
+    let lighting =
+        sim_engine::Lighting3d::new(sim_engine::AmbientLight3d::new(Color::WHITE, 0.6).unwrap());
+    let fog = Some(sim_engine::Fog3d::new(Color::WHITE, 1.0, 0.1).unwrap());
+    scene.set_lighting(lighting);
+    scene.set_fog(fog);
+    let before = scene.statistics();
+    for background in [Color::TRANSPARENT, Color::rgba(0.2, 0.3, 0.4, 0.5)] {
+        scene.set_background(background).unwrap();
+        assert_eq!(scene.background(), background);
+        assert_eq!(scene.statistics(), before);
+        assert_eq!(scene.budget(), budget);
+        assert_eq!(scene.lighting(), lighting);
+        assert_eq!(scene.fog(), fog);
+        assert_eq!(
+            scene.set_background(Color::rgba(0.2, 0.3, 0.4, 1.1)),
+            Err(Scene3dError::InvalidBackground)
+        );
+        assert_eq!(scene.background(), background);
+    }
+}
+
+#[test]
 fn target_replacement_policy_preserves_steady_state_and_invalidates_failures() {
     let descriptor = TargetDescriptor {
         width: 640,

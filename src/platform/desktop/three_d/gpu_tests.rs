@@ -2,8 +2,9 @@
 //!
 //! Two attributed, lit Blend triangles share topology and a mipmapped texture.
 //! Four requested revisions exercise alias detachment then unique capacity reuse.
-//! One actual device replacement verifies restoration and the next unchanged
-//! preparation. This inspects resources/reports after real offscreen draws;
+//! The dev.5 mutation companion and the original revision fixture each perform
+//! one device replacement and then an unchanged preparation. This inspects
+//! resources/reports after real offscreen draws;
 //! it is not pixel readback, confirmed surface presentation, or a performance gate.
 
 use super::*;
@@ -25,6 +26,9 @@ use winit::{
     platform::x11::EventLoopBuilderExtX11,
     window::{Window, WindowId},
 };
+
+#[path = "gpu_tests/mutations.rs"]
+mod mutations;
 
 const SIZE: u32 = 64;
 const LIMITS: ThreeDRenderLimits = ThreeDRenderLimits::new(0, 2, SIZE as u64 * SIZE as u64)
@@ -89,25 +93,60 @@ fn game() -> LogicResult<Game> {
         (PhysicalKeyCode::Digit2, 2),
         (PhysicalKeyCode::Digit3, 3),
         (PhysicalKeyCode::Digit4, 4),
+        (PhysicalKeyCode::Digit5, 5),
+        (PhysicalKeyCode::Digit6, 6),
+        (PhysicalKeyCode::Digit7, 7),
+        (PhysicalKeyCode::Digit8, 8),
+        (PhysicalKeyCode::Digit9, 9),
+        (PhysicalKeyCode::KeyR, 0),
     ] {
         app.bind_key(key, action)?;
     }
     let geometry = assets.clone();
     let images = textures.clone();
+    let plain = MeshAsset3d::new(Mesh3d::new(
+        assets[1].mesh().vertices().to_vec(),
+        vec![0, 1, 2],
+    )?)?;
     app.add_fallible_frame_system(
         move |input: FrameInput<u8>,
+              mut view: ResMut<View3d>,
               mut objects: Query<(&ProbeObject, &mut MeshVisual3d)>|
               -> LogicResult {
+            if input.has_press_occurrence(5) {
+                view.set_background(Color::rgba(0.2, 0.3, 0.4, 0.5))?;
+            }
             for (marker, mut visual) in &mut objects {
                 if marker.0 != 0 {
+                    if input.has_press_occurrence(0) {
+                        visual.set_texture(None)?;
+                    }
                     continue;
                 }
-                for action in [1, 2, 3, 4] {
+                for action in [1, 2, 3, 4, 6, 7, 8, 9] {
                     if input.has_press_occurrence(action) {
-                        if action <= 2 {
-                            visual.set_asset(geometry[action as usize].clone())?;
-                        } else {
-                            visual.set_texture(Some(images[action as usize - 2].clone()))?;
+                        match action {
+                            1 | 2 => visual.set_asset(geometry[action as usize].clone())?,
+                            3 | 4 => {
+                                visual.set_texture(Some(images[action as usize - 2].clone()))?;
+                            }
+                            6 => visual.set_texture(None)?,
+                            7 => visual.set_texture(Some(images[0].clone()))?,
+                            8 => {
+                                let unlit =
+                                    visual.surface().with_lighting(SurfaceLighting3d::Unlit);
+                                visual.set_surface(unlit)?;
+                                visual.set_texture(None)?;
+                                visual.set_asset(plain.clone())?;
+                            }
+                            9 => {
+                                visual.set_asset(geometry[0].clone())?;
+                                let lit =
+                                    visual.surface().with_lighting(SurfaceLighting3d::Lambert);
+                                visual.set_surface(lit)?;
+                                visual.set_texture(Some(images[0].clone()))?;
+                            }
+                            _ => unreachable!("bounded fixture actions"),
                         }
                     }
                 }
@@ -241,6 +280,7 @@ fn run(renderer: &mut WgpuRenderer) -> LogicResult {
         renderer.adapter_name(),
         renderer.adapter_backend()
     );
+    mutations::run(renderer)?;
     let mut game = game()?;
     let mut cache = DesktopThreeD::new();
     prepare(&game, &mut cache, renderer)?;
@@ -350,7 +390,7 @@ impl ApplicationHandler for Fixture {
 }
 
 #[test]
-#[ignore = "manual Linux/X11/Vulkan cache acceptance with one device replacement"]
+#[ignore = "manual Linux/X11/Vulkan cache acceptance with two device replacements"]
 fn managed_mesh_texture_revisions_and_recovery() -> LogicResult {
     let mut builder = EventLoop::builder();
     builder.with_x11().with_any_thread(true);
