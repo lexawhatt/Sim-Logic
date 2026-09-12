@@ -1,12 +1,13 @@
-//! Public-API regression for Engine revision 1afbc7c5a71a7aabafe41d16ac2502bef7424e2f.
+//! Public-API regression first reproduced on Engine dev.4 revision 1afbc7c5.
 //!
 //! This manual Linux/X11 test creates one hidden window, four one-triangle
 //! resources and one replacement logical device. It does not present, inspect
 //! desktop input, modify Engine or claim GPU pixel correctness. `restore_scene3d`
 //! is the passing control; standalone `restore_mesh3d` must obey the same material
-//! contract. On the pinned dev.4 source the latter rejects alpha and resets UV,
-//! addressing and material alpha policy, so this ignored regression must fail.
-//! A future corrected Engine pin should make it pass without weakening assertions.
+//! contract. The original dev.4 source rejected alpha and reset UV, addressing
+//! and material alpha policy. The fix shipped in dev.5 and the official 0.4.0
+//! release; the assertions remain unchanged. It is ignored in ordinary runs
+//! because it requires a real display and Vulkan device, not an expected failure.
 //!
 //! Run explicitly on an available X11/XWayland display and Vulkan adapter:
 //! `timeout 60s cargo test --offline --features desktop --test engine_dev4_gpu -- --ignored --nocapture --test-threads=1`
@@ -140,7 +141,7 @@ fn probe(renderer: &mut WgpuRenderer) -> ProbeResult<Vec<String>> {
         return Err("this manual fixture requires Vulkan".into());
     }
     println!(
-        "Engine dev.4 restoration: adapter={} backend={}",
+        "Engine standalone restoration: adapter={} backend={}",
         renderer.adapter_name(),
         renderer.adapter_backend()
     );
@@ -223,7 +224,7 @@ impl ApplicationHandler for Fixture {
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
-                        .with_title("Sim;Logic Engine dev.4 restoration regression")
+                        .with_title("Sim;Logic Engine standalone restoration regression")
                         .with_inner_size(PhysicalSize::new(64, 64))
                         .with_visible(false),
                 )?,
@@ -238,7 +239,7 @@ impl ApplicationHandler for Fixture {
 }
 
 #[test]
-#[ignore = "known upstream dev.4 standalone material recovery bug; manual Linux/X11/Vulkan"]
+#[ignore = "manual Linux/X11/Vulkan resource recovery regression"]
 fn standalone_mesh_restore_preserves_material_like_scene_restore() -> ProbeResult {
     let mut builder = EventLoop::builder();
     builder.with_x11().with_any_thread(true);

@@ -141,7 +141,7 @@ pub(super) fn run(renderer: &mut WgpuRenderer) -> LogicResult {
     assert_eq!(after.texture_cpu_bytes(), before.texture_cpu_bytes());
     assert_eq!(after.texture_gpu_bytes(), before.texture_gpu_bytes());
     println!(
-        "dev.5 cache mutations: background IDs, plain alias, detach/rebind, rejected attribute edit retry and mutated-scene device recovery preserved"
+        "3D cache mutations: background IDs, plain alias, detach/rebind, rejected attribute edit retry and mutated-scene device recovery preserved"
     );
     Ok(())
 }

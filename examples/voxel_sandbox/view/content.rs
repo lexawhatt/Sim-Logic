@@ -188,7 +188,7 @@ impl HudCache {
         };
         self.debug_lines = [
             format!(
-                "TWIN FIELDS / {} / {:?} / {} / Engine 0.4 dev.5",
+                "TWIN FIELDS / {} / {:?} / {} / Engine 0.4.0",
                 local.region.name(),
                 local.phase,
                 if session.game.creative {

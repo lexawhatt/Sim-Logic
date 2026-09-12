@@ -5,9 +5,8 @@
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
 background. This is real geometric 3D, not projected screen rectangles.
-The bridge pins Engine `0.4.0-dev.5` at git revision
-`98b2c4d7cccc694ad1be02ff5f2fa626c41c55a5`, an integration candidate rather than
-the final registry release. Cuboids keep their simple opaque/outline API.
+The bridge pins the official Engine `0.4.0` release from crates.io.
+Cuboids keep their simple opaque/outline API.
 Host-built meshes support vertex colors, UVs, normals, Opaque/Mask/Blend
 materials, textures and explicit lighting/fog. Mesh import, normal generation,
 shadows, point lights and 3D picking remain outside this bridge.
@@ -235,9 +234,9 @@ These counters are not whole-frame allocation or universal FPS measurements.
 Device recovery restores whole scenes, keeping object IDs, reserved geometry
 capacity, texture revisions and material settings. Targets are recreated for
 the new device. Pending timing associations are cleared, not reassigned to
-new-device frames. Engine dev.5 fixes the earlier standalone textured
-`restore_mesh3d` material regression. The unchanged manual consumer test passes
-on NVIDIA/Vulkan; this is not Intel qualification or a final Engine release.
+new-device frames. Engine 0.4.0 includes the fix for the earlier standalone
+textured `restore_mesh3d` material regression. The manual consumer test passes
+on NVIDIA/Vulkan with the original assertions; this is not Intel qualification.
 The bridge keeps whole-scene recovery for shared-resource deduplication.
 
 ## Geometry, camera, and view switching
@@ -348,7 +347,7 @@ setter preserves other rendering limits; subsequently replacing all
 
 Engine's strict path can clip filled triangles at all six camera boundaries,
 creating more triangles than the source contained. The adapter passes the
-combined surface-triangle ceiling directly to dev.4's authoritative preflight;
+combined surface-triangle ceiling directly to Engine's authoritative preflight;
 it no longer estimates headroom from the smallest object. Leave explicit
 triangle headroom for strict moving cameras. Native submits source triangles
 to hardware clipping and reports CPU clipped/discarded counts as None, not
@@ -444,7 +443,7 @@ checks; their `inside_view()` results are useful but do not prove Engine's
 stricter portable-shader validation. Verify the intended desktop camera and
 viewport range with the actual renderer as well.
 
-The [dev.4 CPU tests](../../tests/dev4_visuals.rs) cover surface defaults,
+The [0.4 CPU tests](../../tests/dev4_visuals.rs) cover surface defaults,
 atomic attribute requirements, immutable strided texture revisions, mip byte
 counts and exact extraction limits. They do not claim rendered pixel evidence.
 The [mesh tests](../../tests/mesh_three_d.rs) cover immutable sharing, geometry

@@ -59,8 +59,8 @@ an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
 pointer buttons have no global routing focus (OS capture is a separate explicit service), audio is not a World-owned voice service,
 and 3D accepts host-built textured meshes but supplies no model-file importer.
-The current Engine dependency is an exact `0.4.0-dev.5` Git revision, not a
-registry release. Its new capabilities are under consumer integration testing.
+The current Engine dependency is the official `0.4.0` release from crates.io,
+pinned exactly. The guides distinguish supported paths from remaining test gaps.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been
 checked on Linux/Vulkan, not every platform. For the product overview and

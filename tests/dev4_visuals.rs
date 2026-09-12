@@ -1,4 +1,4 @@
-//! CPU-only contracts for the Engine dev.4 presentation descriptors.
+//! CPU-only contracts for the Engine 0.4 presentation descriptors.
 
 use sim_engine::{
     AmbientLight3d, Fog3d, Lighting3d, Mesh3d, Mesh3dAttributes, SurfaceAlphaMode3d,

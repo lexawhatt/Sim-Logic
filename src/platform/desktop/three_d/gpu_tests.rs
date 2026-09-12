@@ -2,7 +2,7 @@
 //!
 //! Two attributed, lit Blend triangles share topology and a mipmapped texture.
 //! Four requested revisions exercise alias detachment then unique capacity reuse.
-//! The dev.5 mutation companion and the original revision fixture each perform
+//! The material mutation companion and the original revision fixture each perform
 //! one device replacement and then an unchanged preparation. This inspects
 //! resources/reports after real offscreen draws;
 //! it is not pixel readback, confirmed surface presentation, or a performance gate.
@@ -276,7 +276,7 @@ fn run(renderer: &mut WgpuRenderer) -> LogicResult {
         "Vulkan fixture required"
     );
     println!(
-        "Logic dev.4 cache acceptance: {} / {}",
+        "Logic 3D cache acceptance: {} / {}",
         renderer.adapter_name(),
         renderer.adapter_backend()
     );
@@ -376,7 +376,7 @@ impl ApplicationHandler for Fixture {
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
-                        .with_title("Sim;Logic dev.4 cache acceptance")
+                        .with_title("Sim;Logic 3D cache acceptance")
                         .with_inner_size(PhysicalSize::new(SIZE, SIZE))
                         .with_visible(false),
                 )?,
