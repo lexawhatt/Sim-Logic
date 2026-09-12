@@ -20,6 +20,37 @@ available to users as `sim_logic::input`.
 | [examples](../../examples) | Complete applications and their own gameplay or presentation rules. |
 | [tests](../../tests) | Acceptance tests using the public API. |
 
+## Build storage
+
+This checkout uses `debug = "line-tables-only"` and `incremental = false` in
+the development profile. Tests inherit those settings. Backtraces keep file
+and line information, but the default artifacts do not contain full debugger
+variable/type information or the incremental compiler cache. Debug assertions
+and integer-overflow checks remain enabled; release settings are unchanged.
+See [Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html)
+for the profile and inheritance rules. These checkout settings do not override
+the workspace profile of an application that depends on Sim;Logic.
+
+For a full debugger session, opt in temporarily:
+
+```bash
+CARGO_PROFILE_DEV_DEBUG=2 cargo build --example moving_ball
+```
+
+Different feature combinations and profile overrides still retain different
+artifacts. Check disk use before building a large matrix; the profile reduces
+growth but is not a hard disk quota. Once no Cargo build is using this checkout,
+remove its rebuildable development/test artifacts while keeping release builds:
+
+```bash
+du -sh target
+cargo clean --profile dev
+```
+
+Nothing cleans automatically during compilation or application startup.
+Keep one feature combination while iterating, then run broader checks before
+delivery. Use `cargo check` when linking/running a binary is not needed.
+
 ## The shared application runner
 
 [headless.rs](../../src/application/headless.rs) is the small public facade for

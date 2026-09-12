@@ -2,6 +2,9 @@
 //!
 //! Run the adapter on the process main thread. The underlying platform may
 //! permit only one event-loop creation for the lifetime of the process.
+//! Focus loss cancels held controls through the shared input core. Synthetic
+//! keyboard events and repeated presses are ignored; returning to the window
+//! requires a fresh physical press before a key becomes held again.
 
 #[path = "desktop/images.rs"]
 mod images;
@@ -45,8 +48,8 @@ use crate::{
     },
     identity::{WorldFactoryId, WorldGeneration},
     input::{
-        ALL_PHYSICAL_KEYS, Action, ButtonState, InputEvent, PhysicalKeyCode,
-        SUPPORTED_PHYSICAL_KEY_COUNT, physical_key_index,
+        Action, ButtonState, InputEvent, PhysicalKeyCode, SUPPORTED_PHYSICAL_KEY_COUNT,
+        physical_key_index,
     },
     render::FrameLimits,
     three_d::ThreeDRenderLimits,
@@ -524,21 +527,35 @@ impl<A: Action> DesktopHost<A> {
         event_loop.exit();
     }
 
-    fn collect_key(&mut self, event: winit::event::KeyEvent) {
-        let Some(key) = map_key(event.physical_key) else {
+    fn collect_key(
+        &mut self,
+        physical_key: PhysicalKey,
+        state: ElementState,
+        is_synthetic: bool,
+        repeat: bool,
+    ) {
+        // X11 can synthesize releases before Focused(false), and restore
+        // presses on focus gain. Neither is a new physical user action.
+        // Repeats must not reactivate a key cancelled by a focus boundary;
+        // returning to the window requires a fresh non-repeat press.
+        if is_synthetic || (repeat && state == ElementState::Pressed) {
+            return;
+        }
+        let Some(key) = map_key(physical_key) else {
             return;
         };
-        self.collect_physical_key(key, map_button_state(event.state));
+        self.collect_physical_key(key, map_button_state(state));
     }
 
     fn collect_physical_key(&mut self, key: PhysicalKeyCode, state: ButtonState) {
-        self.held_keys[physical_key_index(key)] = state == ButtonState::Pressed;
-        self.collect_input(InputEvent::key(key, state));
+        if self.collect_input(InputEvent::key(key, state)) {
+            self.held_keys[physical_key_index(key)] = state == ButtonState::Pressed;
+        }
     }
 
-    fn collect_input(&mut self, event: InputEvent) {
+    fn collect_input(&mut self, event: InputEvent) -> bool {
         if self.input_failure.is_some() {
-            return;
+            return false;
         }
         // Only the trailing continuous sample is replaceable. A key, button,
         // or leave event keeps all preceding pointer geometry causal.
@@ -546,25 +563,32 @@ impl<A: Action> DesktopHost<A> {
             && let Some(last @ InputEvent::PointerMoved { .. }) = self.pending_events.last_mut()
         {
             *last = event;
-            return;
+            return true;
         }
         if self.pending_events.len() >= self.input_event_limit {
             self.input_failure = Some(InputBufferFailure::Limit);
-            return;
+            return false;
         }
         if self.pending_events.try_reserve(1).is_err() {
             self.input_failure = Some(InputBufferFailure::Allocation);
-            return;
+            return false;
         }
         self.pending_events.push(event);
+        true
     }
 
     fn collect_cursor(
         &mut self,
         position: PhysicalPosition<f64>,
     ) -> Result<(), DesktopPointerError> {
-        let event = self.pointer_geometry.cursor_moved(position)?;
-        self.collect_input(event);
+        if self.input_failure.is_some() {
+            return Ok(());
+        }
+        let mut geometry = self.pointer_geometry;
+        let event = geometry.cursor_moved(position)?;
+        if self.collect_input(event) {
+            self.pointer_geometry = geometry;
+        }
         Ok(())
     }
 
@@ -575,34 +599,46 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn collect_pointer_left(&mut self) {
-        let event = self.pointer_geometry.cursor_left();
-        self.collect_input(event);
+        if self.collect_input(InputEvent::PointerLeft) {
+            self.pointer_geometry.cursor_left();
+        }
     }
 
     fn collect_resize(&mut self, size: PhysicalSize<u32>) -> Result<(), DesktopPointerError> {
-        if let Some(event) = self.pointer_geometry.resized(size)? {
-            self.collect_input(event);
+        if self.input_failure.is_some() {
+            return Ok(());
+        }
+        let mut geometry = self.pointer_geometry;
+        if geometry
+            .resized(size)?
+            .is_none_or(|event| self.collect_input(event))
+        {
+            self.pointer_geometry = geometry;
         }
         Ok(())
     }
 
     fn collect_scale_factor(&mut self, scale_factor: f64) -> Result<(), DesktopPointerError> {
-        if let Some(event) = self.pointer_geometry.scale_factor_changed(scale_factor)? {
-            self.collect_input(event);
+        if self.input_failure.is_some() {
+            return Ok(());
+        }
+        let mut geometry = self.pointer_geometry;
+        if geometry
+            .scale_factor_changed(scale_factor)?
+            .is_none_or(|event| self.collect_input(event))
+        {
+            self.pointer_geometry = geometry;
         }
         Ok(())
     }
 
     fn collect_focus_loss(&mut self) {
-        self.release_all_keys();
-        self.collect_pointer_left();
-    }
-
-    fn release_all_keys(&mut self) {
-        for key in ALL_PHYSICAL_KEYS {
-            if self.held_keys[physical_key_index(key)] {
-                self.collect_physical_key(key, ButtonState::Released);
-            }
+        // The shared core owns cancellation expansion and its exact ordered
+        // edge preflight. Queue one boundary, not a partially accepted batch
+        // of ordinary releases that could accidentally complete user actions.
+        if self.collect_input(InputEvent::FocusLost) {
+            self.held_keys.fill(false);
+            self.pointer_geometry.cursor_left();
         }
     }
 
@@ -959,7 +995,11 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => event_loop.exit(),
-            WindowEvent::KeyboardInput { event, .. } => self.collect_key(event),
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => self.collect_key(event.physical_key, event.state, is_synthetic, event.repeat),
             WindowEvent::CursorMoved { position, .. } => {
                 if let Err(error) = self.collect_cursor(position) {
                     self.stop(event_loop, DesktopRunError::Pointer(error));
@@ -1231,6 +1271,10 @@ fn validate_logical_size(width: f64, height: f64) -> Result<(), DesktopConfigErr
 mod pointer_tests;
 
 #[cfg(test)]
+#[path = "desktop/input_tests.rs"]
+mod input_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{error::Error, time::Duration};
@@ -1243,7 +1287,7 @@ mod tests {
         commands::LogicCommands,
         headless::{CandidateFailure, FrameFailure},
         identity::{ApplicationId, WorldGeneration},
-        input::{FixedInput, InputEvent},
+        input::{ALL_PHYSICAL_KEYS, FixedInput, InputEvent},
         query::Query,
         system::Stage,
         time::FixedTime,
@@ -1380,12 +1424,12 @@ mod tests {
     }
 
     #[test]
-    fn focus_loss_releases_all_supported_keys_once_in_catalog_order() -> Result<(), Box<dyn Error>>
-    {
+    fn focus_loss_queues_one_core_owned_boundary_after_all_supported_keys()
+    -> Result<(), Box<dyn Error>> {
         let mut host = DesktopHost::new(
             parity_runner()?,
             DesktopConfig::default(),
-            ALL_PHYSICAL_KEYS.len() * 2,
+            ALL_PHYSICAL_KEYS.len() + 1,
             frame_budget(FrameLimits::default()),
             ThreeDRenderLimits::default(),
         );
@@ -1394,23 +1438,18 @@ mod tests {
         for key in new_keys.into_iter().rev() {
             host.collect_physical_key(key, ButtonState::Pressed);
         }
-        host.release_all_keys();
+        host.collect_focus_loss();
 
-        assert_eq!(host.pending_events.len(), new_keys.len() * 2);
+        assert_eq!(host.pending_events.len(), new_keys.len() + 1);
         for (index, key) in new_keys.into_iter().enumerate() {
             assert_eq!(
                 host.pending_events[index],
                 InputEvent::key(new_keys[new_keys.len() - index - 1], ButtonState::Pressed)
             );
-            assert_eq!(
-                host.pending_events[index + new_keys.len()],
-                InputEvent::key(key, ButtonState::Released)
-            );
             assert!(!host.held_keys[physical_key_index(key)]);
         }
-
-        host.release_all_keys();
-        assert_eq!(host.pending_events.len(), new_keys.len() * 2);
+        assert_eq!(host.pending_events.last(), Some(&InputEvent::FocusLost));
+        assert_eq!(host.input_failure, None);
         Ok(())
     }
 

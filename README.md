@@ -82,6 +82,8 @@ The first experimental slice can:
   F3/F4/F5/F6/F8/F9 to application-defined actions;
 - map left, right, and middle mouse buttons to actions with click-time pointer
   samples and explicit screen-to-world coordinate conversion;
+- keep each input edge's physical key or mouse button, and distinguish an
+  ordinary release from cancellation on pointer leave or focus loss;
 - find live same-shape overlaps among typed circular colliders and among
   axis-aligned rectangular colliders;
 - optionally integrate finite `LinearVelocity2d` components during fixed
@@ -124,6 +126,11 @@ adapter is optional, immediate and independent of World transactions; it is
 not a full sound engine. The [3D bridge](DOCUMENTATION/rendering/ThreeD.md) currently
 supports cuboids, not arbitrary meshes, lighting or materials. Engine 0.3's
 additional mesh and texture capabilities are not yet managed Logic components.
+
+Inspect input sources and cancellation without a window using
+`cargo run --no-default-features --example input_cancellation`. The
+[input guide](DOCUMENTATION/guides/Pointer-Input.md) explains why a cancelled
+release must not confirm a click or drag.
 
 Try the image path with `cargo run --release --example image_board`.
 WASD/arrows move an image, Space changes its source region, Enter opens an
@@ -998,7 +1005,13 @@ cargo bench --bench headless_runtime --no-default-features -- --remove-only
 cargo bench --bench headless_runtime --no-default-features -- --enablement-only
 cargo bench --bench headless_runtime --no-default-features -- --exit-only
 cargo bench --bench headless_runtime --no-default-features -- --pointer-only
+cargo bench --bench headless_runtime --no-default-features -- --input-cancellation-only
 ```
+
+The cancellation gate checks source, pointer, cause, and token identity across
+frame delivery and delayed fixed ticks. After warm-up it requires zero allocator
+calls across 100 frames alternating pointer leave and focus loss. This is a
+headless CPU check, not a measurement of desktop event delivery or GPU work.
 
 It reports World build and steady-state frame time for 0, 100, 1,000, and
 10,000 circles, plus managed-idle scale, balanced entity churn, and typed event

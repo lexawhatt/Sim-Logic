@@ -15,8 +15,8 @@ a desktop example to testing the same application without a window.
 
 - [Runtime](guides/Runtime.md): entities, Systems, Commands, fixed time,
   interpolation, pause and World replacement.
-- [Pointer input](guides/Pointer-Input.md): mouse buttons, click-time positions
-  and screen-to-world coordinates.
+- [Input](guides/Pointer-Input.md): keys and mouse buttons, click-time positions,
+  screen-to-world coordinates and cancellation on focus loss.
 - [Audio output](guides/Audio-Output.md): optional device output, its lifetime,
   buffer settings and diagnostics.
 

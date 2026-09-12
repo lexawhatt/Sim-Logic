@@ -130,8 +130,8 @@ pub mod prelude {
     };
     pub use crate::input::{
         Action, ActionEdge, ButtonState, DigitalAxis2d, DuplicateMouseBinding, FixedInput,
-        FrameInput, InputCollectionError, InputEvent, MouseButton, PhysicalKeyCode, PointerSample,
-        PointerSampleError,
+        FrameInput, InputCancellationReason, InputCollectionError, InputControl, InputEvent,
+        MouseButton, PhysicalKeyCode, PointerSample, PointerSampleError,
     };
     pub use crate::motion::{
         CameraFollowTarget2d, CameraFollowTarget2dError, DigitalMovement2d, DigitalMovement2dError,

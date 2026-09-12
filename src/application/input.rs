@@ -1,11 +1,19 @@
 //! Typed, platform-independent keyboard and pointer input.
 
+#[path = "input/control.rs"]
+mod control;
+use control::cancelled_controls;
+pub use control::{InputCancellationReason, InputControl};
+
 #[path = "input/pointer.rs"]
 mod pointer;
 
 use pointer::{ALL_MOUSE_BUTTONS, mouse_button_index};
 pub use pointer::{DuplicateMouseBinding, MouseButton, PointerSample, PointerSampleError};
 
+#[cfg(test)]
+#[path = "input/cancellation_tests.rs"]
+mod cancellation_tests;
 #[cfg(test)]
 #[path = "input/pointer_tests.rs"]
 mod pointer_tests;
@@ -215,8 +223,16 @@ pub enum InputEvent {
     },
     /// Clears the pointer and releases held mouse buttons in Left/Right/Middle
     /// order. Synthesized releases have no pointer sample. Keyboard state is
-    /// unchanged; focus-loss adapters must separately release held keys.
+    /// unchanged. The generated releases have a PointerLeft cancellation reason.
     PointerLeft,
+    /// Clears the pointer and cancels held mapped keyboard controls in the
+    /// supported key catalog order, then mouse controls in Left/Right/Middle
+    /// order. Generated releases have a FocusLost reason and no pointer sample.
+    ///
+    /// One event can create many logical edges; all normal frame and retained
+    /// limits apply atomically. Later events in the same batch are still read.
+    /// This is not a persistent focus-state flag or an input-routing layer.
+    FocusLost,
 }
 
 impl InputEvent {
@@ -296,6 +312,13 @@ impl<A: Action> ActionBindings<A> {
 
     fn mouse_action_for(&self, button: MouseButton) -> Option<A> {
         self.by_mouse[mouse_button_index(button)]
+    }
+
+    fn control_action_for(&self, control: InputControl) -> Option<A> {
+        match control {
+            InputControl::Key(key) => self.action_for(key),
+            InputControl::MouseButton(button) => self.mouse_action_for(button),
+        }
     }
 
     /// Binds one physical key without replacing an existing binding.
@@ -391,7 +414,8 @@ pub enum InputCollectionError {
         received: usize,
     },
     /// This frame would generate too many logical edges, including releases
-    /// synthesized by PointerLeft. Checked even when fixed updates are paused.
+    /// synthesized by PointerLeft or FocusLost. Checked even when fixed updates
+    /// are paused.
     FrameEdgeLimitExceeded {
         /// Maximum generated frame-input edge count.
         limit: usize,
@@ -451,18 +475,43 @@ impl Error for InputCollectionError {}
 ///
 /// An edge belongs to one physical occurrence. Different keys or mouse buttons
 /// mapped to the same action remain separate entries in physical event order.
-/// Pointer leave synthesizes releases in Left/Right/Middle order.
+/// Pointer leave synthesizes releases in Left/Right/Middle order. Focus loss
+/// releases keys in portable catalog order, then mouse buttons in that order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ActionEdge<A: Action> {
     action: A,
     state: ButtonState,
     intent: TransitionIntentToken,
     pointer: Option<PointerSample>,
+    control: InputControl,
+    cancellation: Option<InputCancellationReason>,
 }
 
 impl<A: Action> ActionEdge<A> {
+    /// Returns the physical control associated with this occurrence, even if
+    /// several controls share its action or its pointer position is unknown.
+    /// The original value is preserved across frame and delayed fixed delivery.
+    pub const fn control(self) -> InputControl {
+        self.control
+    }
+
+    /// Returns why this release was synthesized, or None for ordinary input.
+    /// Presses always return None. A mouse release without a known pointer is
+    /// not necessarily cancelled; use this method rather than guessing from
+    /// pointer absence. Cancellation does not erase an earlier press occurrence.
+    pub const fn cancellation_reason(self) -> Option<InputCancellationReason> {
+        self.cancellation
+    }
+
+    /// Returns whether this is a cancellation release rather than an ordinary
+    /// physical release. Commit-on-release interactions should normally ignore
+    /// cancelled releases while still clearing their own held/drag state.
+    pub const fn is_cancelled(self) -> bool {
+        self.cancellation.is_some()
+    }
+
     /// Returns this mouse occurrence's event-time pointer sample. Keyboard
-    /// edges, synthesized leave releases, and mouse edges without a known
+    /// edges, cancellation releases, and mouse edges without a known
     /// position return None. Later movement does not change this value.
     pub const fn pointer(self) -> Option<PointerSample> {
         self.pointer
@@ -870,31 +919,17 @@ impl<A: Action> InputState<A> {
         for event in events {
             match *event {
                 InputEvent::Key { key, state } => {
-                    if let Some(action) = self.bindings.action_for(key)
-                        && change_button(&mut self.held_keys[physical_key_index(key)], state)
-                    {
-                        self.record_edge(action, state, None, delivery);
-                    }
+                    self.record_edge(InputControl::Key(key), state, None, delivery);
                 }
                 InputEvent::MouseButton { button, state } => {
-                    if let Some(action) = self.bindings.mouse_action_for(button)
-                        && change_button(&mut self.held_mouse[mouse_button_index(button)], state)
-                    {
-                        self.record_edge(action, state, self.pointer, delivery);
-                    }
+                    self.record_edge(InputControl::MouseButton(button), state, None, delivery);
                 }
                 InputEvent::PointerMoved { sample } => self.pointer = Some(sample),
-                InputEvent::PointerLeft => {
+                InputEvent::PointerLeft | InputEvent::FocusLost => {
+                    let reason = cancellation_reason(*event);
                     self.pointer = None;
-                    for button in ALL_MOUSE_BUTTONS {
-                        if let Some(action) = self.bindings.mouse_action_for(button)
-                            && change_button(
-                                &mut self.held_mouse[mouse_button_index(button)],
-                                ButtonState::Released,
-                            )
-                        {
-                            self.record_edge(action, ButtonState::Released, None, delivery);
-                        }
+                    for control in cancelled_controls(reason) {
+                        self.record_edge(control, ButtonState::Released, Some(reason), delivery);
                     }
                 }
             }
@@ -936,15 +971,18 @@ impl<A: Action> InputState<A> {
                     );
                 }
                 InputEvent::PointerMoved { .. } => {}
-                InputEvent::PointerLeft => {
-                    for button in ALL_MOUSE_BUTTONS {
+                InputEvent::PointerLeft | InputEvent::FocusLost => {
+                    for control in cancelled_controls(cancellation_reason(*event)) {
                         // Synthetic no-op releases are not physical repeats
                         // or unmapped events; only actual held buttons count.
-                        if self.bindings.mouse_action_for(button).is_some()
-                            && change_button(
-                                &mut held_mouse[mouse_button_index(button)],
-                                ButtonState::Released,
-                            )
+                        let held = match control {
+                            InputControl::Key(key) => &mut held_keys[physical_key_index(key)],
+                            InputControl::MouseButton(button) => {
+                                &mut held_mouse[mouse_button_index(button)]
+                            }
+                        };
+                        if self.bindings.control_action_for(control).is_some()
+                            && change_button(held, ButtonState::Released)
                         {
                             report.logical_edges += 1;
                         }
@@ -1037,20 +1075,36 @@ impl<A: Action> InputState<A> {
 
     fn record_edge(
         &mut self,
-        action: A,
+        control: InputControl,
         state: ButtonState,
-        pointer: Option<PointerSample>,
+        cancellation: Option<InputCancellationReason>,
         delivery: EdgeDelivery,
     ) {
+        let Some(action) = self.bindings.control_action_for(control) else {
+            return;
+        };
+        let held = match control {
+            InputControl::Key(key) => &mut self.held_keys[physical_key_index(key)],
+            InputControl::MouseButton(button) => &mut self.held_mouse[mouse_button_index(button)],
+        };
+        if !change_button(held, state) {
+            return;
+        }
+        let pointer = match (control, cancellation) {
+            (InputControl::MouseButton(_), None) => self.pointer,
+            _ => None,
+        };
         self.update_held_action(action, state);
         let occurrence = self.next_occurrence;
         // Whole-frame preflight proved both queue bounds and never-reused
-        // occurrence space, including every synthetic leave release.
+        // occurrence space, including every pointer-leave or focus-loss release.
         self.next_occurrence += 1;
         let edge = ActionEdge {
             action,
             state,
             pointer,
+            control,
+            cancellation,
             intent: TransitionIntentToken::input(
                 delivery.application,
                 delivery.origin,
@@ -1079,6 +1133,16 @@ impl<A: Action> InputState<A> {
                 }
             }
         }
+    }
+}
+
+fn cancellation_reason(event: InputEvent) -> InputCancellationReason {
+    // Only the two explicit cancellation branches call this helper. Keep their
+    // control enumeration identical between preflight and committed collection.
+    if matches!(event, InputEvent::FocusLost) {
+        InputCancellationReason::FocusLost
+    } else {
+        InputCancellationReason::PointerLeft
     }
 }
 

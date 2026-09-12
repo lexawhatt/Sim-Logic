@@ -215,16 +215,10 @@ fn focus_loss_releases_keyboard_before_pointer_and_clears_stationary_position()
         host.collect_mouse_button(button, ElementState::Pressed);
     }
     host.collect_focus_loss();
-    assert_eq!(
-        &host.pending_events[5..],
-        [
-            InputEvent::key(PhysicalKeyCode::KeyW, ButtonState::Released),
-            InputEvent::PointerLeft,
-        ]
-    );
+    assert_eq!(&host.pending_events[5..], [InputEvent::FocusLost]);
     host.collect_resize(PhysicalSize::new(1200, 800))?;
     host.collect_scale_factor(2.0)?;
-    assert_eq!(host.pending_events.len(), 7);
+    assert_eq!(host.pending_events.len(), 6);
     let observed = advance(&mut host)?;
     assert_eq!(observed.pointer, None);
     assert_eq!(
@@ -237,7 +231,7 @@ fn focus_loss_releases_keyboard_before_pointer_and_clears_stationary_position()
         ]
     );
     host.collect_focus_loss();
-    assert_eq!(host.pending_events, [InputEvent::PointerLeft]);
+    assert_eq!(host.pending_events, [InputEvent::FocusLost]);
     host.collect_mouse_button(PlatformMouseButton::Left, ElementState::Pressed);
     let observed = advance(&mut host)?;
     assert_eq!(observed.presses.last(), Some(&(TestAction::Left, None)));

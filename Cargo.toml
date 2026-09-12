@@ -25,6 +25,12 @@ png = { version = "=0.18.1", default-features = false, optional = true }
 [dev-dependencies]
 rtrb = "=0.3.5"
 
+# Keep local development and tests small; test inherits this profile.
+# Override CARGO_PROFILE_DEV_DEBUG=2 for a full debugger session if needed.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
 [[example]]
 name = "moving_ball"
 required-features = ["desktop"]
@@ -89,6 +95,10 @@ required-features = ["desktop"]
 name = "text_labels"
 path = "examples/text_labels/main.rs"
 required-features = ["desktop", "text"]
+
+[[example]]
+name = "input_cancellation"
+path = "examples/input_cancellation/main.rs"
 
 [[bench]]
 name = "headless_runtime"

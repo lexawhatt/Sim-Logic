@@ -16,6 +16,8 @@ use sim_logic::prelude::*;
 
 #[path = "headless_runtime/images.rs"]
 mod images;
+#[path = "headless_runtime/input_cancellation.rs"]
+mod input_cancellation;
 #[path = "headless_runtime/pause.rs"]
 mod pause;
 #[path = "headless_runtime/pointer.rs"]
@@ -2955,6 +2957,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Sim;Logic pointer-input allocation gate");
         return pointer::run_allocation_case();
     }
+    if std::env::args().any(|argument| argument == "--input-cancellation-only") {
+        println!("Sim;Logic input cancellation allocation gate");
+        return input_cancellation::run_allocation_case();
+    }
     if std::env::args().any(|argument| argument == "--world-build-only") {
         println!("Sim;Logic managed World-build benchmark");
         run_managed_idle_case()?;
@@ -3000,6 +3006,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_acceleration_motion_case()?;
     run_digital_motion_case()?;
     run_input_allocation_suite()?;
+    input_cancellation::run_allocation_case()?;
     run_managed_idle_case()?;
     run_spatial_build_case()?;
     run_command_suite()?;
