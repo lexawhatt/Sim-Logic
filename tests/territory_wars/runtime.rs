@@ -13,6 +13,9 @@ use super::territory_wars::{
 const SEED: u64 = territory_wars::DEFAULT_SEED;
 const TICK: Duration = Duration::from_millis(100);
 
+#[path = "navigation.rs"]
+mod navigation;
+
 #[test]
 fn prepared_demo_uses_real_rules_and_remains_unassisted() -> LogicResult {
     let (app, initial) = territory_wars::app::build_demo(SEED, true)?;

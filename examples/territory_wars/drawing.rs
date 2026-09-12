@@ -94,6 +94,9 @@ const WORDS: &[&str] = &[
     "CLICK A BORDERING COLOR TO ATTACK",
     "1-5 PRESETS / ARROWS ADJUST / R RESTART",
     "VIEW ONLY - F4 TO ARM CHEATS",
+    "MMB DRAG / WHEEL ZOOM / V RESET VIEW",
+    "MAP ZOOM %",
+    "F3 INSPECT / F4 CHEATS / ESC EXIT",
 ];
 
 const WORD_REGIONS: [[u32; 4]; WORDS.len()] = word_regions();

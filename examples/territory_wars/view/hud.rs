@@ -148,6 +148,21 @@ pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
     canvas.text(28.0, 759.0, 1.2, notice, muted())?;
     canvas.text(
         28.0,
+        867.0,
+        1.1,
+        "MMB DRAG / WHEEL ZOOM / V RESET VIEW",
+        muted(),
+    )?;
+    canvas.text(800.0, 867.0, 1.1, "MAP ZOOM %", muted())?;
+    canvas.number(
+        880.0,
+        867.0,
+        1.1,
+        (session.map_view.zoom() * 100.0).round() as u32,
+        ink(),
+    )?;
+    canvas.text(
+        28.0,
         884.0,
         1.1,
         "1-5 PRESETS / ARROWS ADJUST / R RESTART",

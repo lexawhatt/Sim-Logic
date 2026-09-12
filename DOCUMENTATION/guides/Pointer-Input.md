@@ -63,6 +63,46 @@ a refreshed `InputEvent::pointer_moved` sample explicitly.
 The [public pointer tests](../../tests/pointer_input/runtime.rs) exercise event
 order, delayed fixed delivery, pause, and World replacement without a window.
 
+## Wheel scrolling
+
+Wheel events need no action binding. Submit
+`InputEvent::mouse_wheel(ScrollDelta::lines(x, y)?)` or
+`ScrollDelta::pixels(x, y)?` through the same `FrameRequest`. The desktop adapter
+preserves fractional wheel lines and divides physical pixel deltas by the
+event-time DPI scale. Pixels in the public API are logical pixels. Positive X
+is right and positive Y is up; the application's zoom/scroll policy chooses
+what that means on screen. Do not multiply wheel displacement by delta time.
+
+`FrameInput::scroll_events()` returns individual `PointerScrollEvent` values.
+Each has `delta()` with explicit units and `pointer()` captured at the event,
+not at the end of the frame. A missing position is `None`, not the screen center.
+Separate events are not added together or converted between lines and pixels.
+Both constructors reject non-finite coordinates and absolute values above
+1,000,000 in their declared units; even zero deltas count toward the physical
+input-event limit.
+
+For camera controls, use `FrameInput::events()` to interleave
+`FrameInputEvent::Action(edge)` and `FrameInputEvent::Scroll(scroll)` in their
+physical order. A wheel followed by a click can then use the updated camera,
+while a click before the wheel still uses the previous view. The merged
+iterator allocates no extra buffer. Absolute motion remains the latest pointer
+sample: advance an active drag to each mouse/scroll event's position before
+handling that event, then to `input.pointer()` after the loop. Keyboard edges
+have no pointer and must not cancel such a drag accidentally.
+
+Scroll is frame-only, including during pause. Fixed ticks do not receive it;
+it is not retained for a later frame, replayed into a replacement World, or
+issued a transition token. A focus-loss boundary discards the entire accepted
+frame's wheel batch, before and after that boundary. Rejected input batches
+publish no partial wheel changes. All eligible frame Systems see the same
+immutable events; application code still owns routing and gesture capture.
+
+See [Frontier](../examples/Territory-Wars.md) for MMB pan, wheel zoom, fixed HUD
+exclusion, and event-ordered picking. Existing `edges()`, mouse bindings, and
+fixed button delivery are unchanged. Downstream exhaustive matches on
+`InputEvent` need `MouseWheel`; desktop error matches need
+`DesktopPointerError::Scroll`.
+
 ## Which control, and why did it release?
 
 Several physical controls can share one action. For example, bind both Space

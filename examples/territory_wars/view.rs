@@ -70,7 +70,7 @@ pub fn spawn(world: &mut WorldBuilder, font: ImageAssetId) -> Result<(), WorldBu
         images,
     })?;
     // Empty slots have no visual at all. In particular, 1,800 invisible glyphs
-    // must not become 1,800 image passes on Engine 0.2.
+    // must not become 1,800 empty image submissions.
     for index in 0..drawing::MAX_RECTS {
         world.spawn(RectSlot(index))?;
     }

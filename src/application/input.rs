@@ -14,6 +14,9 @@ pub use pointer::{DuplicateMouseBinding, MouseButton, PointerSample, PointerSamp
 #[path = "input/motion.rs"]
 mod motion;
 pub use motion::{RelativePointerMotion, RelativePointerMotionError};
+#[path = "input/scroll.rs"]
+mod scroll;
+pub use scroll::{FrameInputEvent, PointerScrollEvent, ScrollDelta, ScrollDeltaError, ScrollUnit};
 #[path = "input/capture.rs"]
 mod capture;
 pub use capture::{PointerCapture, PointerCaptureStatus};
@@ -24,6 +27,9 @@ mod cancellation_tests;
 #[cfg(test)]
 #[path = "input/pointer_tests.rs"]
 mod pointer_tests;
+#[cfg(test)]
+#[path = "input/scroll_tests.rs"]
+mod scroll_tests;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -42,6 +48,8 @@ use crate::identity::{ApplicationId, TransitionIntentToken, WorldGeneration};
 
 /// Default maximum number of physical input events accepted in one frame and
 /// logical edges generated per frame or retained for the next FixedUpdate delivery.
+/// Frame-only wheel storage has the same limit; wheel events also count toward
+/// the physical event count, including zero displacements.
 pub const DEFAULT_INPUT_EVENT_LIMIT: usize = 1_024;
 
 /// Marker contract for values used as logical input actions.
@@ -264,6 +272,13 @@ pub enum InputEvent {
         /// Validated raw device displacement, independent of the viewport/DPI.
         motion: RelativePointerMotion,
     },
+    /// One wheel occurrence with explicit line or logical-pixel units. Captures
+    /// the latest pointer in event order; no binding, fixed replay, or token.
+    /// FocusLost discards all wheel events in the same accepted batch.
+    MouseWheel {
+        /// Finite per-event displacement; separate occurrences are not combined.
+        delta: ScrollDelta,
+    },
     /// A physical mouse-button state change, using the latest pointer sample.
     MouseButton {
         /// The physical mouse button.
@@ -299,6 +314,11 @@ impl InputEvent {
     /// Supplies validated raw displacement; headless injection needs no OS capture.
     pub const fn relative_pointer_motion(motion: RelativePointerMotion) -> Self {
         Self::RelativePointerMotion { motion }
+    }
+
+    /// Supplies a validated, ordered wheel event for frame-update consumers.
+    pub const fn mouse_wheel(delta: ScrollDelta) -> Self {
+        Self::MouseWheel { delta }
     }
 
     /// Creates a mouse-button event. Its logical edge captures the latest
@@ -545,6 +565,7 @@ pub struct ActionEdge<A: Action> {
     pointer: Option<PointerSample>,
     control: InputControl,
     cancellation: Option<InputCancellationReason>,
+    ordinal: usize,
 }
 
 impl<A: Action> ActionEdge<A> {
@@ -604,6 +625,7 @@ impl<A: Action> ActionEdge<A> {
 pub(crate) struct FrameInputState<A: Action> {
     held: HashSet<A>,
     edges: Vec<ActionEdge<A>>,
+    scrolls: Vec<PointerScrollEvent>,
     pointer: Option<PointerSample>,
     relative_motion: RelativePointerMotion,
     focus_lost: bool,
@@ -639,6 +661,7 @@ impl<A: Action> FrameInputState<A> {
         Self {
             held: HashSet::new(),
             edges: Vec::new(),
+            scrolls: Vec::new(),
             pointer: None,
             relative_motion: RelativePointerMotion::ZERO,
             focus_lost: false,
@@ -648,6 +671,7 @@ impl<A: Action> FrameInputState<A> {
     pub(crate) fn clear_reusing_storage(&mut self) {
         self.held.clear();
         self.edges.clear();
+        self.scrolls.clear();
         self.pointer = None;
         self.relative_motion = RelativePointerMotion::ZERO;
         self.focus_lost = false;
@@ -668,6 +692,21 @@ pub struct FrameInput<'w, A: Action> {
 }
 
 impl<A: Action> FrameInput<'_, A> {
+    /// Iterates over wheel events in physical order, retaining fractional line
+    /// or logical-pixel units and event-time pointers. Events are frame-only,
+    /// even while paused, and a focus-loss frame has no wheel events.
+    pub fn scroll_events(&self) -> impl Iterator<Item = PointerScrollEvent> + '_ {
+        self.state.scrolls.iter().copied()
+    }
+
+    /// Interleaves action edges and wheel occurrences in physical event order.
+    /// Use this when a wheel changes the camera used to interpret nearby clicks.
+    /// Synthesized cancellation releases retain their normal ordering. Each
+    /// queue has the input event limit; the merged view allocates no storage.
+    pub fn events(&self) -> impl Iterator<Item = FrameInputEvent<A>> + '_ {
+        scroll::ordered_events(&self.state.edges, &self.state.scrolls)
+    }
+
     /// Returns this frame's raw displacement. Apply sensitivity once, without
     /// delta-time scaling. No fixed-tick delivery or transition replay occurs.
     pub fn relative_motion(&self) -> RelativePointerMotion {
@@ -675,7 +714,7 @@ impl<A: Action> FrameInput<'_, A> {
     }
 
     /// Reports a focus-loss boundary even when no mapped control was held.
-    /// All relative motion in that accepted batch is discarded.
+    /// All relative motion and wheel events in that accepted batch are discarded.
     pub fn focus_lost(&self) -> bool {
         self.state.focus_lost
     }
@@ -920,6 +959,7 @@ struct EdgeDelivery {
     application: ApplicationId,
     origin: WorldGeneration,
     frame: u64,
+    ordinal: usize,
 }
 
 #[derive(Debug)]
@@ -933,6 +973,7 @@ pub(crate) struct InputState<A: Action> {
     focus_lost: bool,
     held_action_counts: HashMap<A, usize>,
     frame_edges: Vec<ActionEdge<A>>,
+    frame_scrolls: Vec<PointerScrollEvent>,
     fixed_edges: Vec<ActionEdge<A>>,
     next_occurrence: u64,
 }
@@ -948,12 +989,16 @@ impl<A: Action> InputState<A> {
 
         let mut held_action_counts = HashMap::new();
         let mut frame_edges = Vec::new();
+        let mut frame_scrolls = Vec::new();
         let mut fixed_edges = Vec::new();
         let held_capacity = SUPPORTED_PHYSICAL_KEY_COUNT + ALL_MOUSE_BUTTONS.len();
         held_action_counts
             .try_reserve(held_capacity)
             .map_err(|_| InputCollectionError::StorageAllocationFailed { limit: event_limit })?;
         frame_edges
+            .try_reserve(event_limit)
+            .map_err(|_| InputCollectionError::StorageAllocationFailed { limit: event_limit })?;
+        frame_scrolls
             .try_reserve(event_limit)
             .map_err(|_| InputCollectionError::StorageAllocationFailed { limit: event_limit })?;
         fixed_edges
@@ -970,6 +1015,7 @@ impl<A: Action> InputState<A> {
             focus_lost: false,
             held_action_counts,
             frame_edges,
+            frame_scrolls,
             fixed_edges,
             next_occurrence: 0,
         })
@@ -1004,16 +1050,19 @@ impl<A: Action> InputState<A> {
         }
 
         self.frame_edges.clear();
+        self.frame_scrolls.clear();
         self.relative_motion = relative_motion;
         self.focus_lost = focus_lost;
-        let delivery = EdgeDelivery {
+        let mut delivery = EdgeDelivery {
             paused,
             application,
             origin,
             frame,
+            ordinal: 0,
         };
 
-        for event in events {
+        for (ordinal, event) in events.iter().enumerate() {
+            delivery.ordinal = ordinal;
             match *event {
                 InputEvent::Key { key, state } => {
                     self.record_edge(InputControl::Key(key), state, None, delivery);
@@ -1023,6 +1072,15 @@ impl<A: Action> InputState<A> {
                 }
                 InputEvent::PointerMoved { sample } => self.pointer = Some(sample),
                 InputEvent::RelativePointerMotion { .. } => {}
+                InputEvent::MouseWheel { delta } => {
+                    if !focus_lost {
+                        self.frame_scrolls.push(PointerScrollEvent {
+                            delta,
+                            pointer: self.pointer,
+                            ordinal,
+                        });
+                    }
+                }
                 InputEvent::PointerLeft | InputEvent::FocusLost => {
                     let reason = cancellation_reason(*event);
                     self.pointer = None;
@@ -1068,7 +1126,9 @@ impl<A: Action> InputState<A> {
                         &mut report,
                     );
                 }
-                InputEvent::PointerMoved { .. } | InputEvent::RelativePointerMotion { .. } => {}
+                InputEvent::PointerMoved { .. }
+                | InputEvent::RelativePointerMotion { .. }
+                | InputEvent::MouseWheel { .. } => {}
                 InputEvent::PointerLeft | InputEvent::FocusLost => {
                     for control in cancelled_controls(cancellation_reason(*event)) {
                         // Synthetic no-op releases are not physical repeats
@@ -1124,6 +1184,8 @@ impl<A: Action> InputState<A> {
 
     pub(crate) fn copy_frame_snapshot_into(&self, target: &mut FrameInputState<A>) {
         target.replace_from(&self.held_action_counts, &self.frame_edges);
+        target.scrolls.clear();
+        target.scrolls.extend_from_slice(&self.frame_scrolls);
         target.pointer = self.pointer;
         target.relative_motion = self.relative_motion;
         target.focus_lost = self.focus_lost;
@@ -1167,6 +1229,7 @@ impl<A: Action> InputState<A> {
 
     pub(crate) fn clear_world_edges(&mut self) {
         self.frame_edges.clear();
+        self.frame_scrolls.clear();
         self.fixed_edges.clear();
         self.relative_motion = RelativePointerMotion::ZERO;
         self.focus_lost = false;
@@ -1174,6 +1237,7 @@ impl<A: Action> InputState<A> {
 
     pub(crate) fn end_frame(&mut self) {
         self.frame_edges.clear();
+        self.frame_scrolls.clear();
         self.relative_motion = RelativePointerMotion::ZERO;
         self.focus_lost = false;
     }
@@ -1210,6 +1274,7 @@ impl<A: Action> InputState<A> {
             pointer,
             control,
             cancellation,
+            ordinal: delivery.ordinal,
             intent: TransitionIntentToken::input(
                 delivery.application,
                 delivery.origin,

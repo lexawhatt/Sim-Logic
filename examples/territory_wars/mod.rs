@@ -6,6 +6,7 @@
 pub mod app;
 mod drawing;
 pub mod layout;
+pub mod navigation;
 pub mod simulation;
 mod view;
 

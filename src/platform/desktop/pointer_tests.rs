@@ -6,11 +6,14 @@ use winit::event::MouseButton as PlatformMouseButton;
 use super::*;
 use crate::{
     app::AppConfig,
-    input::{FrameInput, MouseButton, PointerSample},
+    input::{FrameInput, FrameInputEvent, MouseButton, PointerSample},
     resources::AppResMut,
     system::Stage,
     visual::ActiveCamera2d,
 };
+
+#[path = "scroll_tests.rs"]
+mod scroll_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum TestAction {
@@ -22,12 +25,14 @@ enum TestAction {
 
 #[derive(Default)]
 struct Observed {
+    events: Vec<FrameInputEvent<TestAction>>,
     pointer: Option<PointerSample>,
     presses: Vec<(TestAction, Option<PointerSample>)>,
     releases: Vec<(TestAction, Option<PointerSample>)>,
 }
 
 fn observe(input: FrameInput<TestAction>, mut observed: AppResMut<Observed>) {
+    observed.events.extend(input.events());
     observed.pointer = input.pointer();
     for action in [
         TestAction::Key,

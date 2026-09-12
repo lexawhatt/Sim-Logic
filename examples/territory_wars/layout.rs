@@ -78,14 +78,6 @@ impl Layout {
     }
 }
 
-pub fn cell_at(x: f32, y: f32) -> Option<usize> {
-    MAP.contains(x, y).then(|| {
-        let column = ((x - MAP_X) / CELL) as usize;
-        let row = ((y - MAP_Y) / CELL) as usize;
-        row * WIDTH + column
-    })
-}
-
 pub fn cell_center(cell: usize) -> (f32, f32) {
     (
         MAP_X + (cell % WIDTH) as f32 * CELL + CELL * 0.5,
@@ -104,6 +96,7 @@ mod tests {
 
     #[test]
     fn letterbox_round_trip_and_half_open_map() -> LogicResult {
+        let cell_at = |x, y| super::super::navigation::MapView::default().cell_at(x, y);
         for (width, height) in [(1440.0, 900.0), (700.0, 1000.0), (1.0, 1.0)] {
             let layout = Layout::new(LogicalViewport::new(width, height)?);
             let (x, y) = layout.unproject(layout.position(500.0, 300.0));

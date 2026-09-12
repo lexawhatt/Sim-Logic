@@ -4,12 +4,14 @@ use super::{faction_color, shade};
 use crate::territory_wars::{
     app::Session,
     drawing::Canvas,
-    layout::{self, CELL, MAP, MAP_X, MAP_Y},
+    layout::{self, Area, CELL, MAP, MAP_X, MAP_Y},
+    navigation::{self, MapView},
     simulation::{FACTIONS, HEIGHT, NEUTRAL, Phase, WATER, WIDTH},
 };
 use sim_logic::prelude::*;
 
 pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
+    let view = session.map_view;
     canvas.rect(
         MAP_X - 1.0,
         MAP_Y - 1.0,
@@ -19,7 +21,9 @@ pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
     )?;
     canvas.rect(MAP_X, MAP_Y, MAP.width, MAP.height, Color::rgb8(17, 30, 43))?;
     for column in (0..WIDTH).step_by(8) {
-        canvas.rect(
+        map_rect(
+            canvas,
+            view,
             MAP_X + column as f32 * CELL,
             MAP_Y,
             1.0,
@@ -28,7 +32,9 @@ pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
         )?;
     }
     for row in (0..HEIGHT).step_by(8) {
-        canvas.rect(
+        map_rect(
+            canvas,
+            view,
             MAP_X,
             MAP_Y + row as f32 * CELL,
             MAP.width,
@@ -70,6 +76,10 @@ pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
     };
     // At most one rectangle per land cell even for a fragmented late-game map.
     for row in 0..HEIGHT {
+        let (_, y) = view.project(MAP_X, MAP_Y + row as f32 * CELL);
+        if y >= MAP_Y + MAP.height || y + CELL * view.zoom() <= MAP_Y {
+            continue;
+        }
         let mut x = 0;
         while x < WIDTH {
             let cell = row * WIDTH + x;
@@ -82,7 +92,9 @@ pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
             while x < WIDTH && key(row * WIDTH + x) == Some(color) {
                 x += 1;
             }
-            canvas.rect(
+            map_rect(
+                canvas,
+                view,
                 MAP_X + begin as f32 * CELL,
                 MAP_Y + row as f32 * CELL,
                 (x - begin) as f32 * CELL,
@@ -98,7 +110,8 @@ pub(super) fn draw(canvas: &mut Canvas, session: &Session) -> LogicResult {
         } else {
             Color::WHITE
         };
-        outline(canvas, x - CELL * 0.5, y - CELL * 0.5, CELL, CELL, color)?;
+        let (x, y) = view.project(x - CELL * 0.5, y - CELL * 0.5);
+        outline(canvas, x, y, CELL * view.zoom(), CELL * view.zoom(), color)?;
     }
     if session.game.phase() == Phase::Running && !session.paused {
         labels(canvas, session)?;
@@ -193,6 +206,12 @@ fn labels(canvas: &mut Canvas, session: &Session) -> LogicResult {
             })
             .map_or(faction.capital, |(cell, _)| cell);
         let (x, y) = layout::cell_center(cell);
+        let (x, y) = session.map_view.project(x, y);
+        if !MAP.contains(x, y) {
+            continue;
+        }
+        // Keep the entire fixed-size badge inside MAP: glyphs are separate
+        // image draws, so clipping the background alone would leak text.
         let x = x.clamp(MAP_X + 54.0, MAP_X + MAP.width - 54.0);
         let y = y.clamp(MAP_Y + 30.0, MAP_Y + MAP.height - 30.0);
         canvas.rect(
@@ -241,8 +260,34 @@ fn outline(
     height: f32,
     color: Color,
 ) -> LogicResult {
-    canvas.rect(x, y, width, 1.0, color)?;
-    canvas.rect(x, y + height - 1.0, width, 1.0, color)?;
-    canvas.rect(x, y, 1.0, height, color)?;
-    canvas.rect(x + width - 1.0, y, 1.0, height, color)
+    clipped_rect(canvas, Area::new(x, y, width, 1.0), color)?;
+    clipped_rect(canvas, Area::new(x, y + height - 1.0, width, 1.0), color)?;
+    clipped_rect(canvas, Area::new(x, y, 1.0, height), color)?;
+    clipped_rect(canvas, Area::new(x + width - 1.0, y, 1.0, height), color)
 }
+
+fn map_rect(
+    canvas: &mut Canvas,
+    view: MapView,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+) -> LogicResult {
+    if let Some(area) = view.rectangle(Area::new(x, y, width, height)) {
+        canvas.rect(area.x, area.y, area.width, area.height, color)?;
+    }
+    Ok(())
+}
+
+fn clipped_rect(canvas: &mut Canvas, area: Area, color: Color) -> LogicResult {
+    if let Some(area) = navigation::clip(area) {
+        canvas.rect(area.x, area.y, area.width, area.height, color)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "map_tests.rs"]
+mod tests;

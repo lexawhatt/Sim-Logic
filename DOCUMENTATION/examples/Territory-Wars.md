@@ -52,6 +52,9 @@ capture rule. Win and defeat freeze the game while restart and exit remain usabl
 | Control | Action |
 | --- | --- |
 | Left mouse button | Choose a start, attack a selected owner, or use a HUD control. |
+| Middle mouse drag | Pan the zoomed map. Begin inside the map; the HUD stays fixed. |
+| Mouse wheel | Zoom around the cursor inside the map, from 100% to 800%. |
+| V | Reset the map view without restarting the match. |
 | Space | Expand into bordering neutral land. |
 | Slider / Left and Right arrows | Set dispatch percentage; arrows change it by 5 points. |
 | 1 / 2 / 3 / 4 / 5 | Set 10% / 25% / 50% / 75% / 100%. |
@@ -71,6 +74,13 @@ Using F5, F6, or F8 marks the run **ASSISTED** until a restart or new map, even
 if cheats are subsequently disarmed. F3 only inspects state; F9 works without
 arming cheats. Restart resets the pause, inspector, cheats, and assisted marker.
 There is no saved match: closing the application discards the current game.
+
+At 100% the whole map fits, so panning has no effect. Zooming and panning never
+change game state and remain available while paused. Wheel events over the HUD
+or letterbox do nothing. While MMB is held, left clicks cannot start a match,
+attack, or activate HUD buttons. Leaving the window, losing focus, or receiving
+a resized pointer sample cancels the drag; press MMB again to start a new one.
+Restart and new map also reset the view. The footer shows the current zoom.
 
 ## Inspectable calculations
 
@@ -123,7 +133,9 @@ packed captions count as one image item, not one item per letter.
 | File | Responsibility |
 | --- | --- |
 | [main.rs](../../examples/territory_wars/main.rs) | Seed argument and desktop entry point. |
-| [app.rs](../../examples/territory_wars/app.rs) | Input routing, pause, restart, cheat gating, and Sim;Logic Systems. |
+| [app.rs](../../examples/territory_wars/app.rs) | Session state, bindings, and Sim;Logic Systems. |
+| [interaction.rs](../../examples/territory_wars/app/interaction.rs) | Ordered gestures, fixed-screen controls, pause/restart precedence. |
+| [navigation.rs](../../examples/territory_wars/navigation.rs) | Map transform, cursor-anchored zoom, bounded pan, and map clipping. |
 | [simulation.rs](../../examples/territory_wars/simulation.rs) | Game state, validated orders, phases, and fixed-tick orchestration. |
 | [economy.rs](../../examples/territory_wars/simulation/economy.rs) | Pure income and dispatch calculations, payout, capped debug grants. |
 | [combat.rs](../../examples/territory_wars/simulation/combat.rs) | Pure cost estimates and bounded frontier capture. |
@@ -136,8 +148,9 @@ The game rules have no renderer, ECS, wall-clock, or device dependency.
 Sim;Logic owns input delivery, schedules, managed screen visuals, extraction,
 and desktop coordination. Sim;Engine draws ordinary screen rectangles and image
 regions. A small bitmap atlas contains example captions and digits; this adds
-neither a new text library nor a custom renderer. The supporting library change
-only adds missing physical-key variants needed by these controls.
+neither a new text library nor a custom renderer. Sim;Logic supplies generic
+[ordered wheel input](../guides/Pointer-Input.md#wheel-scrolling); zoom speed,
+map limits, gesture ownership, and fixed HUD policy belong to this example.
 
 Restart replaces the example's `Session` data while keeping its active World
 and visual pools. The simulation reuses its frontier buffer; rendering reuses

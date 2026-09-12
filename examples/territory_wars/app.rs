@@ -4,9 +4,11 @@ use std::time::Duration;
 
 use sim_logic::prelude::*;
 
+mod interaction;
+
 use super::{
     drawing,
-    layout::{self, Layout},
+    navigation::{MapDrag, MapView},
     simulation::{Game, NEUTRAL, Phase, WATER},
     view,
 };
@@ -14,6 +16,8 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
     Click,
+    Pan,
+    ResetView,
     Expand,
     Pause,
     Restart,
@@ -45,6 +49,9 @@ pub struct Session {
     pub notice: &'static str,
     pub notice_seconds: f32,
     pub frame_ms: f32,
+    pub map_view: MapView,
+    map_drag: MapDrag,
+    middle_held: bool,
     slider_drag: bool,
 }
 
@@ -61,6 +68,9 @@ impl Session {
             notice: "CLICK LAND TO CHOOSE YOUR START",
             notice_seconds: 5.0,
             frame_ms: 0.0,
+            map_view: MapView::default(),
+            map_drag: MapDrag::default(),
+            middle_held: false,
             slider_drag: false,
         }
     }
@@ -104,160 +114,6 @@ fn simulate(mut session: AppResMut<Session>) {
     if !session.paused {
         session.game.tick();
     }
-}
-
-fn interact(
-    input: FrameInput<Action>,
-    time: FrameTime,
-    mut session: AppResMut<Session>,
-    mut commands: Commands,
-) -> LogicResult {
-    session.notice_seconds = (session.notice_seconds - time.seconds_f32()).max(0.0);
-    session.frame_ms = time.seconds_f32() * 1000.0;
-    if input.has_press_occurrence(Action::Exit) {
-        commands.request_exit()?;
-        return Ok(());
-    }
-    // Restart/seed changes own this frame; stale simultaneous clicks never
-    // choose a start or spend troops in the newly generated map.
-    let click_new_map = input.pressed(Action::Click).any(|edge| {
-        edge.pointer().is_some_and(|p| {
-            let (x, y) = Layout::new(p.viewport()).unproject(p.position());
-            layout::NEW_MAP.contains(x, y)
-        })
-    });
-    let new_map = input.has_press_occurrence(Action::NewMap) || click_new_map;
-    if new_map || input.has_press_occurrence(Action::Restart) {
-        let seed = if new_map {
-            session.game.seed().wrapping_add(1)
-        } else {
-            session.game.seed()
-        };
-        *session = Session::new(seed);
-        commands.set_paused(false)?;
-        return Ok(());
-    }
-    if input.has_press_occurrence(Action::Debug) {
-        session.debug = !session.debug;
-    }
-    if input.has_press_occurrence(Action::Cheats) {
-        session.cheats = !session.cheats;
-        session.debug = true;
-        let notice = if session.cheats {
-            "CHEATS ARMED - F5 TROOPS / F6 AI ORDERS / F8 WIN"
-        } else {
-            "CHEATS DISARMED - ASSISTED MARK IS RETAINED"
-        };
-        session.notify(notice);
-    }
-    if session.cheats && session.game.phase() == Phase::Running {
-        if input.has_press_occurrence(Action::Grant) {
-            session.game.grant_troops(0, 50_000);
-            session.assisted = true;
-            session.notify("CHEAT: TROOPS FILLED UP TO LAND CAPACITY");
-        }
-        if input.has_press_occurrence(Action::Bots) {
-            let enabled = !session.game.bots_enabled();
-            session.game.set_bots_enabled(enabled);
-            session.assisted = true;
-            session.notify("CHEAT: AI ORDERS TOGGLED - EXISTING ARMIES STILL MOVE");
-        }
-        if input.has_press_occurrence(Action::Win) {
-            session.game.force_player_victory();
-            session.assisted = true;
-            session.notify("CHEAT: VICTORY - THIS RUN IS ASSISTED");
-        }
-    }
-    let click_pause = input.pressed(Action::Click).any(|edge| {
-        edge.pointer().is_some_and(|p| {
-            let (x, y) = Layout::new(p.viewport()).unproject(p.position());
-            layout::PAUSE.contains(x, y)
-        })
-    });
-    if input.has_press_occurrence(Action::Pause) || click_pause {
-        session.paused = !session.paused;
-        session.slider_drag = false;
-        commands.set_paused(session.paused)?;
-        return Ok(());
-    }
-    if session.paused && input.has_press_occurrence(Action::Step) {
-        session.game.tick();
-    }
-    for (action, percent) in [
-        (Action::Ten, 10),
-        (Action::Quarter, 25),
-        (Action::Half, 50),
-        (Action::ThreeQuarters, 75),
-        (Action::All, 100),
-    ] {
-        if input.has_press_occurrence(action) {
-            session.percent = percent;
-        }
-    }
-    if input.has_press_occurrence(Action::Less) {
-        session.percent = session.percent.saturating_sub(5).max(5);
-    }
-    if input.has_press_occurrence(Action::More) {
-        session.percent = session.percent.saturating_add(5).min(100);
-    }
-    if input.has_press_occurrence(Action::Expand) {
-        session.order(NEUTRAL);
-    }
-
-    // Every edge carries the viewport and cursor of its occurrence, including
-    // a quick complete drag inside one frame. A missing release position is a
-    // cancellation, never a click at the previous cursor location.
-    for edge in input.edges() {
-        if edge.action() != Action::Click {
-            continue;
-        }
-        if edge.state() == ButtonState::Released {
-            if session.slider_drag
-                && let Some(pointer) = edge.pointer()
-            {
-                let (x, _) = Layout::new(pointer.viewport()).unproject(pointer.position());
-                session.percent = layout::attack_percent(x);
-            }
-            session.slider_drag = false;
-            continue;
-        }
-        let Some(pointer) = edge.pointer() else {
-            continue;
-        };
-        let (x, y) = Layout::new(pointer.viewport()).unproject(pointer.position());
-        if layout::DEBUG.contains(x, y) {
-            session.debug = !session.debug;
-        } else if layout::SLIDER.contains(x, y) {
-            session.slider_drag = true;
-            session.percent = layout::attack_percent(x);
-        } else if layout::EXPAND.contains(x, y) {
-            session.order(NEUTRAL);
-        } else if let Some(cell) = layout::cell_at(x, y) {
-            if session.game.phase() == Phase::Choosing {
-                if session.game.start(cell) {
-                    session.notify("GROW YOUR RESERVE. CLICK NEUTRAL LAND TO EXPAND.");
-                } else {
-                    session.notify("CHOOSE A LAND TILE, NOT THE SEA");
-                }
-            } else {
-                let target = session.game.owners()[cell];
-                session.order(target);
-            }
-        }
-    }
-    session.hover = input.pointer().and_then(|p| {
-        let (x, y) = Layout::new(p.viewport()).unproject(p.position());
-        layout::cell_at(x, y)
-    });
-    if input.pointer().is_none() || !input.held(Action::Click) {
-        session.slider_drag = false;
-    } else if session.slider_drag
-        && let Some(pointer) = input.pointer()
-    {
-        let (x, _) = Layout::new(pointer.viewport()).unproject(pointer.position());
-        session.percent = layout::attack_percent(x);
-    }
-    Ok(())
 }
 
 pub fn build_application(seed: u64) -> LogicResult<(Application<Action>, WorldFactoryId)> {
@@ -313,6 +169,7 @@ fn build_with_session(session: Session) -> LogicResult<(Application<Action>, Wor
         (PhysicalKeyCode::KeyP, Action::Pause),
         (PhysicalKeyCode::KeyR, Action::Restart),
         (PhysicalKeyCode::KeyN, Action::NewMap),
+        (PhysicalKeyCode::KeyV, Action::ResetView),
         (PhysicalKeyCode::ArrowLeft, Action::Less),
         (PhysicalKeyCode::ArrowRight, Action::More),
         (PhysicalKeyCode::Digit1, Action::Ten),
@@ -330,7 +187,8 @@ fn build_with_session(session: Session) -> LogicResult<(Application<Action>, Wor
         app.bind_key(key, action)?;
     }
     app.bind_mouse_button(MouseButton::Left, Action::Click)?;
-    app.add_fallible_frame_system(interact);
+    app.bind_mouse_button(MouseButton::Middle, Action::Pan)?;
+    app.add_fallible_frame_system(interaction::interact);
     app.add_fixed_system(simulate);
     app.add_fallible_frame_system(view::draw);
     let camera = ActiveCamera2d::centered(1.0)?;

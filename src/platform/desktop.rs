@@ -40,7 +40,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
-    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -625,6 +625,17 @@ impl<A: Action> DesktopHost<A> {
         Ok(())
     }
 
+    fn collect_mouse_wheel(&mut self, delta: MouseScrollDelta) -> Result<(), DesktopPointerError> {
+        if self.input_failure.is_some() {
+            return Ok(());
+        }
+        // Do not merge wheel events: a line and a pixel have different units,
+        // and each event's pointer must stay ordered relative to clicks.
+        let event = self.pointer_geometry.mouse_wheel(delta)?;
+        self.collect_input(event);
+        Ok(())
+    }
+
     fn collect_gpu_timings(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             self.report.gpu_timings.collect(renderer);
@@ -1181,6 +1192,11 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.collect_mouse_button(button, state)
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Err(error) = self.collect_mouse_wheel(delta) {
+                    self.stop(event_loop, DesktopRunError::Pointer(error));
+                }
             }
             WindowEvent::CursorLeft { .. } => self.collect_pointer_left(),
             WindowEvent::Focused(false) => self.collect_focus_loss(),

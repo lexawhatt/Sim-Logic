@@ -8,10 +8,10 @@ use sim_engine::{
 };
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
-    event::MouseButton as PlatformMouseButton,
+    event::{MouseButton as PlatformMouseButton, MouseScrollDelta},
 };
 
-use crate::input::{InputEvent, MouseButton, PointerSample};
+use crate::input::{InputEvent, MouseButton, PointerSample, ScrollDelta, ScrollDeltaError};
 
 /// Invalid desktop geometry encountered before collecting a pointer sample.
 ///
@@ -19,6 +19,8 @@ use crate::input::{InputEvent, MouseButton, PointerSample};
 /// stops before the invalid geometry reaches a logical frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DesktopPointerError {
+    /// A line or converted logical-pixel wheel displacement exceeded its bounds.
+    Scroll(ScrollDeltaError),
     /// Raw relative motion or its coalesced displacement exceeded its bounds.
     RelativeMotion(crate::input::RelativePointerMotionError),
     /// The display scale cannot support Sim;Engine's logical pixel conversion.
@@ -43,6 +45,7 @@ pub enum DesktopPointerError {
 impl fmt::Display for DesktopPointerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Scroll(error) => write!(formatter, "invalid pointer wheel displacement: {error}"),
             Self::RelativeMotion(error) => {
                 write!(formatter, "invalid relative pointer motion: {error}")
             }
@@ -61,6 +64,7 @@ impl fmt::Display for DesktopPointerError {
 impl Error for DesktopPointerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Scroll(error) => Some(error),
             Self::RelativeMotion(error) => Some(error),
             Self::LogicalViewport(error) => Some(error),
             Self::InvalidScaleFactor { .. } | Self::InvalidPosition { .. } => None,
@@ -123,6 +127,21 @@ impl DesktopPointerGeometry {
     pub(super) fn cursor_left(&mut self) -> InputEvent {
         self.physical_cursor = None;
         InputEvent::PointerLeft
+    }
+
+    pub(super) fn mouse_wheel(
+        self,
+        delta: MouseScrollDelta,
+    ) -> Result<InputEvent, DesktopPointerError> {
+        let delta = match delta {
+            MouseScrollDelta::LineDelta(x, y) => ScrollDelta::lines(f64::from(x), f64::from(y)),
+            MouseScrollDelta::PixelDelta(position) => ScrollDelta::pixels(
+                position.x / self.scale_factor,
+                position.y / self.scale_factor,
+            ),
+        }
+        .map_err(DesktopPointerError::Scroll)?;
+        Ok(InputEvent::mouse_wheel(delta))
     }
 
     pub(super) fn resized(
