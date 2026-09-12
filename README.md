@@ -1,7 +1,9 @@
 # Sim;Logic
 
 Sim;Logic is a code-first application layer for
-[Sim;Engine](https://crates.io/crates/sim-engine), currently pinned to 0.3.0.
+[Sim;Engine](https://github.com/lexawhatt/Sim-Engine), currently pinned to the
+`0.4.0-dev.4` Git candidate `1afbc7c5`. This is an integration preview, not a
+published Engine 0.4 release.
 It keeps the program in ordinary Rust, but supplies the pieces that otherwise
 have to be rebuilt for every interactive simulation: entities and components, ordered systems, typed
 input, fixed updates, interpolation, World replacement, and a window/render
@@ -19,10 +21,10 @@ headless example and a plain-language explanation of the runtime.
 A small voxel sandbox with two regions, block building, collision, a hotbar
 and save/load. Your edits and inventory survive travel between Worlds:
 
-Experimental: Engine 0.3.0 rejects some camera angles with
-`UnportableSurfaceTopology`; this can close the window. Save before exploring.
-The [game guide](DOCUMENTATION/examples/Voxel-Sandbox.md#renderer-limitation) describes
-the confirmed blocker. This is not yet a reliable free-camera release.
+The dev.4 version explicitly uses Engine's Native surface policy for its free
+camera. It also exercises textures, material transparency, lighting and fog.
+The [game guide](DOCUMENTATION/examples/Voxel-Sandbox.md#renderer-limitation)
+explains the remaining limitations; this is still an integration prototype.
 
 ```bash
 cargo run --release --features text --example voxel_sandbox
@@ -133,9 +135,9 @@ The first experimental slice can:
   regions, tint, filtering, and shared rectangle/image ordering;
 - register fonts and draw optional single-line screen text with alignment,
   changing content, tint, and shared text/image/rectangle ordering;
-- extract opt-in colored cuboids, host-built opaque meshes and a current-value 3D view, with retained
-  desktop geometry, bounded camera-plane clipping, a depth target, and screen
-  overlays; object-local preflight errors preserve the current managed entity;
+- extract opt-in cuboids and editable host-built meshes, including vertex colors,
+  normals, textures, Opaque/Mask/Blend surfaces, lighting and fog, into Engine's
+  retained scene; choose strict portable or native surface rendering explicitly;
 - optionally send one application-owned mono PCM source to an audio device,
   with explicit buffer policy, lifetime and diagnostics;
 - commit A-to-B World replacement and extract B in the same logical frame.
@@ -146,8 +148,10 @@ asynchronous loading, `Faulted` recovery, Behavior sugar, a full UI toolkit,
 schedules are deliberately not public yet. The [audio output](DOCUMENTATION/guides/Audio-Output.md)
 adapter is optional, immediate and independent of World transactions; it is
 not a full sound engine. The [3D bridge](DOCUMENTATION/rendering/ThreeD.md) currently
-supports cuboids and immutable host-built opaque meshes, not textured materials
-or lighting. Its errors retain Engine's strict portability checks.
+supports scene-owned mesh and texture revisions while keeping application
+snapshots immutable. Engine does the rendering; Logic does not add a second
+3D renderer. Transparent intersections and sorting triangles within a mesh
+remain unsupported.
 
 Inspect input sources and cancellation without a window using
 `cargo run --no-default-features --example input_cancellation`. The

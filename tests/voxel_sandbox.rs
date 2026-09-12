@@ -2,6 +2,8 @@
 
 #[path = "../examples/voxel_sandbox/app.rs"]
 mod app;
+#[path = "../examples/voxel_sandbox/materials.rs"]
+mod materials;
 #[path = "../examples/voxel_sandbox/model/mod.rs"]
 mod model;
 #[path = "../examples/voxel_sandbox/presentation.rs"]
@@ -10,6 +12,8 @@ mod presentation;
 mod projection;
 #[path = "../examples/voxel_sandbox/scene.rs"]
 mod scene;
+#[path = "../examples/voxel_sandbox/showcase.rs"]
+mod showcase;
 #[path = "../examples/voxel_sandbox/view.rs"]
 mod view;
 

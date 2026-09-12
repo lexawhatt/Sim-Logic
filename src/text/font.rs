@@ -8,7 +8,7 @@ use sim_engine::FontFace;
 
 use crate::identity::ApplicationId;
 
-use super::{TextError, TextLimits, TextSettings};
+use super::{TextError, TextLimits, TextPreparationSession, TextSettings};
 
 /// Opaque handle to one application-owned font and immutable size configuration.
 ///
@@ -40,6 +40,15 @@ impl TextFont {
     /// Parsed dependency metadata and allocator overhead are excluded.
     pub fn font_bytes(&self) -> usize {
         self.data.face.allocation_bytes()
+    }
+
+    /// Borrows this registration for reusable CPU label shaping at logical scale 1.0.
+    ///
+    /// The caller owns the session lifetime; no global cache, interior lock or
+    /// self-referencing component is created. This parses shaping state but does
+    /// not allocate an atlas or GPU resource. Font/layout limits stay fixed.
+    pub fn shaping_session(&self) -> Result<TextPreparationSession<'_>, TextError> {
+        TextPreparationSession::new(self)
     }
 
     pub(crate) fn face(&self) -> &FontFace {

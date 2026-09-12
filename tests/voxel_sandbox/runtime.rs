@@ -114,6 +114,63 @@ fn local(runner: &HeadlessRunner<app::Action>) -> LogicResult<&scene::Local> {
         .ok_or_else(|| "local region".into())
 }
 
+type PartSnapshot = (LogicEntity, projection::ChunkPart, MeshAsset3d);
+
+fn part_snapshots(runner: &HeadlessRunner<app::Action>) -> LogicResult<Vec<PartSnapshot>> {
+    runner
+        .components::<projection::ChunkPart>()
+        .map(|(entity, part)| {
+            Ok((
+                entity,
+                *part,
+                runner.component::<MeshVisual3d>(entity)?.asset().clone(),
+            ))
+        })
+        .collect()
+}
+
+fn assert_part_revisions(
+    runner: &HeadlessRunner<app::Action>,
+    old: &[PartSnapshot],
+    dirty: &[usize],
+) -> LogicResult {
+    let current = part_snapshots(runner)?;
+    let mut revised_survivors = 0;
+    for (entity, key, asset) in old {
+        if let Some((current_entity, _, current_asset)) =
+            current.iter().find(|(_, candidate, _)| candidate == key)
+        {
+            assert_eq!(
+                current_entity, entity,
+                "a surviving part must retain its entity"
+            );
+            let changed = dirty.contains(&key.chunk);
+            assert_eq!(
+                current_asset.shares_storage(asset),
+                !changed,
+                "only dirty chunk parts acquire a source revision"
+            );
+            revised_survivors += usize::from(changed);
+        } else {
+            assert!(dirty.contains(&key.chunk));
+            assert!(runner.component::<MeshVisual3d>(*entity).is_err());
+        }
+    }
+    assert!(
+        revised_survivors > 0,
+        "fixture must exercise an in-place part revision"
+    );
+    for (index, (_, key, _)) in current.iter().enumerate() {
+        assert!(
+            current[index + 1..]
+                .iter()
+                .all(|(_, other, _)| key != other),
+            "a part key must not be published twice"
+        );
+    }
+    Ok(())
+}
+
 fn ready(runner: &mut HeadlessRunner<app::Action>) -> LogicResult {
     for _ in 0..3 {
         if local(runner)?.phase == scene::Phase::Ready {
@@ -192,6 +249,11 @@ fn loading_rejects_game_actions_and_idle_frames_share_mesh_storage() -> LogicRes
     assert!(!runner.resource::<View3d>().ok_or("view")?.enabled());
     ready(&mut runner)?;
     assert!(runner.resource::<View3d>().ok_or("view")?.enabled());
+    assert_eq!(
+        runner.components::<projection::ChunkStamp>().count(),
+        model::CHUNK_COUNT,
+        "empty chunks must publish committed stamps too"
+    );
     assert_eq!(local(&runner)?.rebuilt_chunks, model::CHUNK_COUNT as u64);
     let assets: Vec<_> = runner
         .components::<MeshVisual3d>()
@@ -225,16 +287,7 @@ fn edits_rebuild_only_dirty_chunks_and_survive_both_directions_of_travel() -> Lo
             .active_region()
             .chunk_revision(chunk)
     });
-    let assets: Vec<_> = runner
-        .components::<projection::ChunkPart>()
-        .map(|(entity, part)| {
-            Ok((
-                entity,
-                part.chunk,
-                runner.component::<MeshVisual3d>(entity)?.asset().clone(),
-            ))
-        })
-        .collect::<LogicResult<_>>()?;
+    let assets = part_snapshots(&runner)?;
     let meadow = break_one(&mut runner)?;
     let dirty: Vec<_> = revisions
         .iter()
@@ -254,18 +307,7 @@ fn edits_rebuild_only_dirty_chunks_and_survive_both_directions_of_travel() -> Lo
         local(&runner)?.rebuilt_chunks,
         (model::CHUNK_COUNT + dirty.len()) as u64
     );
-    for (entity, chunk, asset) in assets {
-        if dirty.contains(&chunk) {
-            assert!(runner.component::<MeshVisual3d>(entity).is_err());
-        } else {
-            assert!(
-                runner
-                    .component::<MeshVisual3d>(entity)?
-                    .asset()
-                    .shares_storage(&asset)
-            );
-        }
-    }
+    assert_part_revisions(&runner, &assets, &dirty)?;
     travel(&mut runner)?;
     assert_eq!(session(&runner)?.game.active, model::RegionId::Canyon);
     let canyon = break_one(&mut runner)?;
@@ -395,6 +437,68 @@ fn right_click_builds_one_selected_block_and_breaking_returns_inventory() -> Log
     );
     assert_eq!(session(&runner)?.game.inventory, inventory);
     assert_eq!(session(&runner)?.edits, 2);
+    Ok(())
+}
+
+#[test]
+fn new_material_parts_retire_without_replacing_surviving_chunk_entities() -> LogicResult {
+    let scratch = Scratch::new()?;
+    let mut runner = runner(scratch.save())?;
+    ready(&mut runner)?;
+    aim_at_ground(&mut runner)?;
+    let original = part_snapshots(&runner)?;
+    advance(&mut runner, Duration::ZERO, &key(PhysicalKeyCode::Digit3))?;
+    advance(
+        &mut runner,
+        Duration::ZERO,
+        &click(GAME, MouseButton::Right)?,
+    )?;
+    assert_eq!(session(&runner)?.edits, 1);
+    let added: Vec<_> = part_snapshots(&runner)?
+        .into_iter()
+        .filter(|(_, key, _)| !original.iter().any(|(_, old, _)| old == key))
+        .collect();
+    assert!(
+        !added.is_empty(),
+        "central placement must introduce a material part"
+    );
+    assert!(
+        added
+            .iter()
+            .all(|(_, key, _)| key.block == model::Block::Wood)
+    );
+    for (entity, key, _) in &original {
+        if let Some((current, _)) = runner
+            .components::<projection::ChunkPart>()
+            .find(|(_, part)| *part == key)
+        {
+            assert_eq!(current, *entity);
+        }
+    }
+
+    advance(
+        &mut runner,
+        Duration::ZERO,
+        &click(GAME, MouseButton::Left)?,
+    )?;
+    assert_eq!(session(&runner)?.edits, 2);
+    for (entity, key, _) in added {
+        assert!(runner.component::<MeshVisual3d>(entity).is_err());
+        assert!(
+            runner
+                .components::<projection::ChunkPart>()
+                .all(|(_, part)| *part != key)
+        );
+    }
+    let restored = part_snapshots(&runner)?;
+    assert_eq!(restored.len(), original.len());
+    for (entity, key, _) in original {
+        let (current, _, _) = restored
+            .iter()
+            .find(|(_, part, _)| *part == key)
+            .ok_or("original material part was not restored")?;
+        assert_eq!(*current, entity);
+    }
     Ok(())
 }
 
@@ -576,9 +680,10 @@ fn rejected_structural_batch_keeps_old_meshes_then_retries_the_canonical_edit() 
             .active_region()
             .chunk_revision(chunk)
     });
-    let old_meshes: Vec<_> = runner
-        .components::<projection::ChunkPart>()
-        .map(|(entity, part)| (entity, part.chunk))
+    let old_meshes = part_snapshots(&runner)?;
+    let old_stamps: Vec<_> = runner
+        .components::<projection::ChunkStamp>()
+        .map(|(entity, stamp)| (entity, stamp.chunk, stamp.revision, stamp.epoch))
         .collect();
     reject.store(true, Ordering::SeqCst);
     let failed = report(
@@ -595,19 +700,37 @@ fn rejected_structural_batch_keeps_old_meshes_then_retries_the_canonical_edit() 
         model::Block::Air
     );
     assert_eq!((failed.spawned(), failed.despawned()), (0, 0));
-    for (entity, _) in &old_meshes {
-        assert!(runner.component::<MeshVisual3d>(*entity).is_ok());
-    }
-    advance(&mut runner, Duration::ZERO, &[])?;
-    for (entity, chunk) in old_meshes {
-        let dirty =
-            revisions[chunk] != session(&runner)?.game.active_region().chunk_revision(chunk);
-        assert_eq!(
-            runner.component::<MeshVisual3d>(entity).is_err(),
-            dirty,
-            "only chunks touched by the retained canonical edit must be replaced"
+    for (entity, _, asset) in &old_meshes {
+        assert!(
+            runner
+                .component::<MeshVisual3d>(*entity)?
+                .asset()
+                .shares_storage(asset),
+            "a rejected structural batch must not publish source revisions"
         );
     }
+    for (entity, chunk, revision, epoch) in old_stamps {
+        let stamp = runner.component::<projection::ChunkStamp>(entity)?;
+        assert_eq!(
+            (stamp.chunk, stamp.revision, stamp.epoch),
+            (chunk, revision, epoch)
+        );
+    }
+    advance(&mut runner, Duration::ZERO, &[])?;
+    let dirty: Vec<_> = revisions
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk, revision)| {
+            (*revision
+                != session(&runner)
+                    .ok()?
+                    .game
+                    .active_region()
+                    .chunk_revision(chunk))
+            .then_some(chunk)
+        })
+        .collect();
+    assert_part_revisions(&runner, &old_meshes, &dirty)?;
     Ok(())
 }
 

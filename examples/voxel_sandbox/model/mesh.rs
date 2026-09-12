@@ -1,6 +1,6 @@
-use sim_engine::{Mesh3d, Mesh3dError, Vec3};
+use sim_engine::{Color, Mesh3d, Mesh3dAttributes, Mesh3dError, TextureCoordinate2d, Vec3};
 
-use super::{Block, CHUNK_COUNT, CHUNK_SIZE, Region, terrain::chunk_origin};
+use super::{Block, CHUNK_COUNT, CHUNK_SIZE, HEIGHT, Region, terrain::chunk_origin};
 
 /// One nonempty material/shade batch, containing exposed faces only.
 /// shade: 0 bottom, 1 vertical side, 2 top. Coordinates are world-space blocks.
@@ -14,6 +14,9 @@ pub struct MeshPart {
 struct Faces {
     vertices: Vec<Vec3>,
     indices: Vec<u32>,
+    uvs: Vec<TextureCoordinate2d>,
+    normals: Vec<Vec3>,
+    colors: Vec<Color>,
 }
 
 impl Region {
@@ -34,7 +37,10 @@ impl Region {
                     }
                     for face in FACES {
                         let neighbor = [x + face.normal[0], y + face.normal[1], z + face.normal[2]];
-                        if self.get(neighbor).solid() {
+                        // Collision solidity is not render occlusion: leaf
+                        // masks have holes, so geometry behind them must remain.
+                        let neighbor = self.get(neighbor);
+                        if neighbor.solid() && neighbor != Block::Leaves {
                             continue;
                         }
                         let batch =
@@ -48,6 +54,27 @@ impl Region {
                                 z as f32 + corner[2],
                             )
                             .expect("bounded voxel grid corner")
+                        }));
+                        let normal = Vec3::new(
+                            face.normal[0] as f32,
+                            face.normal[1] as f32,
+                            face.normal[2] as f32,
+                        )
+                        .expect("constant unit face normal");
+                        batch.normals.extend([normal; 4]);
+                        batch
+                            .uvs
+                            .extend([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]].map(
+                                |[u, v]| {
+                                    TextureCoordinate2d::new(u, v).expect("normalized face UV")
+                                },
+                            ));
+                        // A small host-owned height tint exercises interpolated
+                        // vertex colors without baking a second lighting model.
+                        // Block/material color is still chosen during projection.
+                        batch.colors.extend(face.corners.map(|corner| {
+                            let tint = 0.94 + (y as f32 + corner[1]) / HEIGHT as f32 * 0.06;
+                            Color::rgb(tint, tint, tint)
                         }));
                         batch.indices.extend([
                             first,
@@ -67,7 +94,15 @@ impl Region {
                 parts.push(MeshPart {
                     block: Block::SOLID[index / 3],
                     shade: (index % 3) as u8,
-                    mesh: Mesh3d::new(batch.vertices, batch.indices)?,
+                    mesh: Mesh3d::with_attributes(
+                        batch.vertices,
+                        batch.indices,
+                        Vec::new(),
+                        Mesh3dAttributes::new()
+                            .with_texture_coordinates(batch.uvs)
+                            .with_vertex_colors(batch.colors)?
+                            .with_normals(batch.normals)?,
+                    )?,
                 });
             }
         }

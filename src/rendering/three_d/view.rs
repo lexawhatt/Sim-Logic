@@ -2,11 +2,22 @@ use std::{error::Error, fmt};
 
 use bevy_ecs::prelude::Resource;
 use sim_engine::{
-    Camera3d, Color, LogicalViewport, Mesh3dStyleError, Projection3d, Pseudo3dError,
-    SurfaceStyle3d, UnitError, Vec3, WorldLength,
+    Camera3d, Color, Fog3d, Lighting3d, LogicalViewport, Mesh3dStyleError, Projection3d,
+    Pseudo3dError, SurfaceStyle3d, UnitError, Vec3, WorldLength,
 };
 
-/// Optional World resource enabling an opaque 3D view beneath screen overlays.
+/// Filled-surface projection policy, available without a GPU dependency.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ThreeDSurfacePolicy {
+    /// Require Engine's conservative cross-backend clipping/orientation proofs.
+    #[default]
+    StrictPortable,
+    /// Use hardware clipping for filled surfaces, retaining finite-arithmetic checks.
+    /// Mathematical display edges retain their independent strict validation.
+    Native,
+}
+
+/// Optional World resource enabling a 3D view beneath screen overlays.
 ///
 /// The positive-y up axis is fixed; the perspective aspect follows the current
 /// logical viewport. Missing or disabled views publish no 3D content, even if
@@ -20,6 +31,10 @@ pub struct View3d {
     near: WorldLength,
     far: WorldLength,
     background: Color,
+    orthographic_span: Option<WorldLength>,
+    surface_policy: ThreeDSurfacePolicy,
+    lighting: Lighting3d,
+    fog: Option<Fog3d>,
     enabled: bool,
 }
 
@@ -35,6 +50,10 @@ impl View3d {
             near: WorldLength::new(0.1)?,
             far: WorldLength::new(1000.0)?,
             background: Color::BLACK,
+            orthographic_span: None,
+            surface_policy: ThreeDSurfacePolicy::StrictPortable,
+            lighting: Lighting3d::default(),
+            fog: None,
             enabled: true,
         };
         view.validate()?;
@@ -51,7 +70,8 @@ impl View3d {
         self.target
     }
 
-    /// Returns the vertical perspective field of view in radians.
+    /// Returns the last configured perspective field of view in radians.
+    /// Orthographic views retain this value but do not use it.
     pub const fn vertical_fov_radians(self) -> f32 {
         self.vertical_fov_radians
     }
@@ -66,7 +86,8 @@ impl View3d {
         self.far
     }
 
-    /// Returns the opaque clear color of the 3D render target.
+    /// Returns the normalized straight-linear RGBA clear color.
+    /// Engine performs the target's premultiplied-alpha conversion.
     pub const fn background(self) -> Color {
         self.background
     }
@@ -74,6 +95,42 @@ impl View3d {
     /// Reports whether the World participates in 3D extraction and rendering.
     pub const fn enabled(self) -> bool {
         self.enabled
+    }
+
+    /// Returns the orthographic vertical world span, or None for perspective.
+    pub const fn orthographic_span(self) -> Option<WorldLength> {
+        self.orthographic_span
+    }
+
+    /// Returns the filled-surface projection policy; strict by default.
+    pub const fn surface_policy(self) -> ThreeDSurfacePolicy {
+        self.surface_policy
+    }
+
+    /// Selects filled-surface validation without changing camera or world state.
+    pub fn set_surface_policy(&mut self, policy: ThreeDSurfacePolicy) {
+        self.surface_policy = policy;
+    }
+
+    /// Returns the ambient and optional directional illumination descriptor.
+    pub const fn lighting(self) -> Lighting3d {
+        self.lighting
+    }
+
+    /// Replaces validated lighting; only Lambert surfaces use it.
+    pub fn set_lighting(&mut self, lighting: Lighting3d) {
+        self.lighting = lighting;
+    }
+
+    /// Returns optional distance fog, disabled by default.
+    pub const fn fog(self) -> Option<Fog3d> {
+        self.fog
+    }
+
+    /// Replaces validated fog; each surface must independently opt in.
+    /// Fog never changes logical visibility, alpha or triangle budgets.
+    pub fn set_fog(&mut self, fog: Option<Fog3d>) {
+        self.fog = fog;
     }
 
     /// Replaces the eye and look-at point atomically after basis validation.
@@ -99,6 +156,7 @@ impl View3d {
             vertical_fov_radians,
             near,
             far,
+            orthographic_span: None,
             ..*self
         };
         proposed.validate()?;
@@ -106,9 +164,28 @@ impl View3d {
         Ok(())
     }
 
-    /// Replaces the normalized opaque clear color, or changes nothing.
+    /// Selects orthographic projection with a vertical world span and automatic aspect.
+    /// Invalid camera arithmetic leaves the entire previous view unchanged.
+    pub fn set_orthographic(
+        &mut self,
+        vertical_span: WorldLength,
+        near: WorldLength,
+        far: WorldLength,
+    ) -> Result<(), View3dError> {
+        let proposed = Self {
+            orthographic_span: Some(vertical_span),
+            near,
+            far,
+            ..*self
+        };
+        proposed.validate()?;
+        *self = proposed;
+        Ok(())
+    }
+
+    /// Replaces the normalized straight-linear RGBA clear color, or changes nothing.
     pub fn set_background(&mut self, background: Color) -> Result<(), View3dError> {
-        SurfaceStyle3d::opaque(background)?;
+        SurfaceStyle3d::blend(background)?;
         self.background = background;
         Ok(())
     }
@@ -126,14 +203,18 @@ impl View3d {
     }
 
     pub(crate) fn validate(self) -> Result<(), View3dError> {
-        SurfaceStyle3d::opaque(self.background)?;
+        SurfaceStyle3d::blend(self.background)?;
         self.camera_with_aspect(1.0)?;
         Ok(())
     }
 
     fn camera_with_aspect(self, aspect: f32) -> Result<Camera3d, View3dError> {
-        let projection =
-            Projection3d::perspective(self.vertical_fov_radians, aspect, self.near, self.far)?;
+        let projection = match self.orthographic_span {
+            Some(span) => Projection3d::orthographic(span, aspect, self.near, self.far)?,
+            None => {
+                Projection3d::perspective(self.vertical_fov_radians, aspect, self.near, self.far)?
+            }
+        };
         Ok(Camera3d::look_at(
             self.position,
             self.target,
@@ -150,7 +231,7 @@ pub enum View3dError {
     Geometry(Pseudo3dError),
     /// Invalid typed projection distance.
     Units(UnitError),
-    /// The target clear color was not normalized and opaque.
+    /// The target clear color was not normalized straight-linear RGBA.
     Background(Mesh3dStyleError),
 }
 

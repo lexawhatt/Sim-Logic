@@ -16,6 +16,12 @@ use sim_logic::prelude::*;
 
 #[path = "../examples/voxel_sandbox/app.rs"]
 mod app;
+#[path = "../examples/voxel_sandbox/materials.rs"]
+#[allow(dead_code, unused_imports)]
+mod materials;
+#[path = "../examples/voxel_sandbox/showcase.rs"]
+#[allow(dead_code, unused_imports)]
+mod showcase;
 // Cargo enables cfg(test) for harness-free benches. Model unit-test helpers
 // are exercised by tests/voxel_sandbox.rs, not by this benchmark binary.
 #[allow(dead_code, unused_imports)]

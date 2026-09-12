@@ -1,4 +1,4 @@
-//! Engine 0.3 boundary checks independent of a window or GPU device.
+//! Engine integration boundary checks independent of a window or GPU device.
 
 use super::*;
 use crate::identity::{ApplicationId, WorldGeneration};
@@ -105,19 +105,18 @@ fn background_only_engine_minimum_does_not_enable_logic_objects() {
 }
 
 #[test]
-fn generated_allowance_reserves_space_for_retained_cube_triangles() {
+fn exact_total_cap_replaces_the_old_retained_cube_reservation() {
     for count in 1..=32 {
         for spare in [0, 1, 12, 84, 4096] {
             let limit = count * 12 + spare;
             let budget = engine_render_budget(count, ThreeDRenderLimits::new(count, limit, 1));
-            assert_eq!(budget.max_generated_triangles(), 12 + spare);
-            assert_eq!(budget.max_generated_vertices(), 3 * (12 + spare));
-            // One or more crossing cubes leave at most count-1 cubes using
-            // retained triangles. No permitted combination exceeds the cap.
-            for crossing in 1..=count {
-                let total = (count - crossing) * 12 + budget.max_generated_triangles();
-                assert!(total <= limit);
-            }
+            assert_eq!(budget.max_surface_triangles(), limit);
+            assert_eq!(budget.max_generated_triangles(), limit);
+            assert_eq!(budget.max_generated_vertices(), 3 * limit);
+            assert_eq!(
+                budget.surface_policy(),
+                SurfaceRasterization3d::StrictPortable
+            );
         }
     }
 }
@@ -132,9 +131,19 @@ fn generated_budget_arithmetic_stays_bounded_at_extreme_author_limits() {
         assert!(budget.max_generated_triangles() <= defaults.max_generated_triangles());
         assert!(budget.max_generated_upload_bytes() <= defaults.max_generated_upload_bytes());
     }
-    let invalid_count = engine_render_budget(usize::MAX, limits);
-    assert_eq!(invalid_count.max_generated_triangles(), 0);
-    assert_eq!(invalid_count.max_generated_vertices(), 0);
+    // Invalid object counts are rejected by check_limits, not by pretending
+    // that an independently valid generated-topology allowance must be zero.
+    assert!(check_limits(usize::MAX, 1, 1, limits).is_err());
+}
+
+#[test]
+fn texture_allowance_includes_engine_mip_recovery_and_transparent_backgrounds() {
+    let limits = ThreeDRenderLimits::new(0, 1, 1).with_texture_limits(1024, 2048);
+    let budget = engine_scene_budget(limits).unwrap();
+    assert_eq!(budget.max_texture_cpu_bytes(), 2048);
+    assert_eq!(budget.max_texture_gpu_bytes(), 2048);
+    let scene = Scene3d::with_alpha_background_and_budget(Color::TRANSPARENT, budget).unwrap();
+    assert_eq!(scene.background(), Color::TRANSPARENT);
 }
 
 #[test]

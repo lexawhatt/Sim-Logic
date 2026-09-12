@@ -522,7 +522,9 @@ pub(super) fn present(
         FramePassOptions::new(0),
     )?;
     if let Some(target) = target {
-        frame.draw_render_target(target, BlendMode::Replace, 1.0, FramePassOptions::new(0))?;
+        // Engine targets already contain premultiplied color. Alpha composition
+        // reveals the underlying World through a transparent 3D background.
+        frame.draw_render_target(target, BlendMode::Alpha, 1.0, FramePassOptions::new(0))?;
     }
     for draw in extracted.screen_draws() {
         // FrameComposer keeps insertion order when the integer order is equal.

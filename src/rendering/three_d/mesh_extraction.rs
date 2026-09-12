@@ -29,7 +29,7 @@ impl ResolvedMesh3d {
     pub const fn transform(&self) -> Transform3d {
         self.visual.transform()
     }
-    /// Returns the normalized opaque surface color.
+    /// Returns normalized straight-linear surface tint, including alpha.
     pub const fn color(&self) -> Color {
         self.visual.color()
     }
@@ -57,6 +57,8 @@ pub(super) fn extract_meshes(
     sources: impl IntoIterator<Item = MeshSource>,
 ) -> Result<(), ThreeDExtractionError> {
     let mut source_bytes = 0_usize;
+    let mut texture_source_bytes = 0_usize;
+    let mut texture_gpu_bytes = 0_usize;
     for source in sources {
         if !source.visual.visible() {
             continue;
@@ -83,6 +85,28 @@ pub(super) fn extract_meshes(
             ThreeDLimitResource::MeshSourceBytes,
             limits.max_mesh_source_bytes(),
         )?;
+        if let Some(texture) = source.visual.texture() {
+            texture_source_bytes = checked_sum(
+                texture_source_bytes,
+                texture.asset().source_bytes(),
+                ThreeDLimitResource::TextureSourceBytes,
+                limits.max_texture_source_bytes(),
+            )?;
+            let texel_bytes =
+                texture
+                    .texel_bytes()
+                    .map_err(|_| ThreeDExtractionError::LimitExceeded {
+                        resource: ThreeDLimitResource::TextureGpuBytes,
+                        requested: u64::MAX,
+                        limit: limits.max_texture_gpu_bytes() as u64,
+                    })?;
+            texture_gpu_bytes = checked_sum(
+                texture_gpu_bytes,
+                texel_bytes,
+                ThreeDLimitResource::TextureGpuBytes,
+                limits.max_texture_gpu_bytes(),
+            )?;
+        }
         if resolved.len() == resolved.capacity() {
             resolved
                 .try_reserve_exact(1)

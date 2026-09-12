@@ -264,3 +264,44 @@ fn desktop_idle_cache_configuration_preserves_window_settings_and_allows_zero() 
         assert_eq!(config.logical_height(), 540.0);
     }
 }
+
+#[test]
+fn dpi_layout_selection_borrows_matching_line_and_rebuilds_only_an_exact_new_style() {
+    use crate::text::{ScreenTextVisual, TextLimits, TextRegistry, TextSettings};
+
+    let mut fonts = TextRegistry::new(ApplicationId::from_raw(9), TextLimits::default());
+    let font = fonts
+        .register(
+            include_bytes!("../../../../tests/assets/text/DejaVuSans.ttf").to_vec(),
+            TextSettings::new(20.0).unwrap(),
+        )
+        .unwrap();
+    let visual = ScreenTextVisual::new(
+        font.clone(),
+        "AV ffi Привет",
+        sim_engine::LogicalScreenPosition::new(0.0, 40.0),
+    )
+    .unwrap();
+    let matching = DesktopPreparedLine::new(&visual, 1.0).unwrap();
+    assert!(std::ptr::eq(matching.line(), visual.shaped_line()));
+    for scale in [1.25, 1.5, 2.0] {
+        let prepared = DesktopPreparedLine::new(&visual, scale).unwrap();
+        assert!(!std::ptr::eq(prepared.line(), visual.shaped_line()));
+        assert_eq!(prepared.line().text(), visual.text());
+        assert_eq!(prepared.line().glyphs(), visual.shaped_line().glyphs());
+        assert_eq!(prepared.line().advance(), visual.metrics().advance());
+        prepared
+            .line()
+            .validate_for(
+                font.face(),
+                &font.settings().style(scale).unwrap(),
+                &font.settings().layout_budget(),
+            )
+            .unwrap();
+    }
+    assert!(DesktopPreparedLine::new(&visual, f32::NAN).is_err());
+    assert_eq!(
+        visual.shaped_line().style(),
+        &font.settings().style(1.0).unwrap()
+    );
+}

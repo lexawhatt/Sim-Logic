@@ -1,8 +1,9 @@
 //! Optional single-line screen labels using Sim;Engine's font implementation.
 //!
 //! Fonts and validated label values can be created and inspected without a
-//! window or GPU. The `text` feature currently compiles Engine's `wgpu` support
-//! because Engine 0.3 groups CPU font support and GPU text under one feature.
+//! window or GPU. The `text` feature includes Engine's GPU atlas types because
+//! label settings also configure desktop limits. The separate `fonts` feature
+//! exposes Engine's CPU font primitives without GPU dependencies.
 //! Font discovery, fallback, wrapping, text input, and widgets are not included.
 //!
 //! ```no_run
@@ -32,12 +33,14 @@
 
 mod error;
 mod font;
+mod session;
 mod settings;
 mod visual;
 
 pub use error::TextError;
 pub use font::TextFont;
 pub(crate) use font::TextRegistry;
+pub use session::TextPreparationSession;
 pub use settings::{TextLimits, TextSettings};
 pub use visual::{ScreenTextVisual, TextAlignment, TextMetrics};
 

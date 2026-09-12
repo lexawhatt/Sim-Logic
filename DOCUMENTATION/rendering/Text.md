@@ -22,8 +22,11 @@ your application. Supply trusted TTF/OTF bytes and follow that font's license.
 This program reads a font supplied by the caller, prepares a Cyrillic label,
 and inspects the extracted result without creating a window or GPU. Run it
 with `--no-default-features --features text` to omit the desktop host.
-Engine 0.3 currently enables its `wgpu` dependency together with `text`, so
-the headless text build still compiles GPU support; it does not initialize it.
+The label `text` feature includes GPU atlas configuration types, so this
+headless label build still compiles GPU support; it does not initialize it.
+For CPU font loading/shaping/rasterization primitives alone, use
+`--no-default-features --features fonts`. That separate feature does not
+enable labels, desktop hosting or GPU dependencies.
 
 ```rust
 use std::time::Duration;
@@ -107,6 +110,39 @@ rectangle, image, then text. Other entities still follow normal entity order.
 All screen content follows World content. Disabled entities contribute no
 text source. Visibility does not capture input or provide hit testing.
 
+## Reusing shaping state
+
+For several changing labels sharing one font, borrow a shaping session from
+that registration. It keeps the parsed shaping face and at most one cached
+plan instead of rebuilding them for every label. The session lives with the
+caller; it is not a global cache or a self-referencing ECS component.
+
+```rust
+use sim_logic::prelude::*;
+
+fn update_labels(font: &TextFont) -> LogicResult {
+    let mut session = font.shaping_session()?;
+    let mut label = ScreenTextVisual::new_with_session(
+        &mut session,
+        "Blocks: 100",
+        LogicalScreenPosition::new(20.0, 40.0),
+    )?;
+    let previous = label.clone();
+    label.set_text_with_session(&mut session, "Blocks: 101")?;
+    assert_eq!(previous.text(), "Blocks: 100");
+    assert_eq!(label.text(), "Blocks: 101");
+    session.clear_scratch(); // Existing labels remain valid.
+    Ok(())
+}
+```
+
+`set_text_with_session` checks the exact font registration even when text is
+unchanged. The session's size, direction and budgets are fixed by that font.
+Failed updates preserve the old label and all published clones. Changed lines
+still own new UTF-8/glyph storage: retaining immutable snapshots is not the same
+as updating an exclusive Engine `ShapedLine` in place. This helper therefore
+does not promise zero allocations for changing labels.
+
 ## Fonts and limits
 
 `TextFont` is an opaque application registration, not a filename or save-file
@@ -132,9 +168,13 @@ configuration values, not GPU resources.
 
 Whitespace keeps logical advance and counts toward conservative glyph work,
 even when it produces no visible quad. `retained_text_bytes()` reports actual
-owned String capacity for one visual; the snapshot UTF-8 allowance instead
-counts text length. CPU source bytes, parser metadata, prepared strings,
-renderer recovery copies, and GPU storage are different quantities. These
+UTF-8 plus shaped-glyph capacity as a conservative upper bound on text storage;
+use the more precise name `retained_layout_bytes()` for that same measurement.
+Unlike the old 0.3 integration, it is not String capacity alone: Engine now owns
+the string inside its retained layout and exposes the combined allocation.
+The snapshot UTF-8 allowance still counts text length. CPU source bytes, parser
+metadata, prepared strings, renderer recovery copies, and GPU storage are
+different quantities. These
 limits are not a total-process memory or untrusted-font execution guarantee.
 
 The headless snippet's frame budget allows one World source, one text source,
@@ -145,16 +185,28 @@ referenced texture limits.
 ## Caching, failures, and DPI
 
 Constructing a label or changing its text/font runs Engine's CPU shaper.
-Extraction clones shared prepared values; it does not shape every frame.
+The label now retains the complete `ShapedLine`, including its UTF-8 string,
+glyph positions and exact font/style provenance, without a duplicate Logic
+string. `shaped_line()` exposes it by immutable reference. Extraction clones
+shared prepared values; it does not shape every frame.
 Moving, aligning, tinting, and ordering reuse the same text storage. There is
 no cache of every string the application has ever displayed.
 
 Desktop presentation keeps a retained Engine run per live visible entity and
 an atlas per used font registration. Unchanged lines reuse their buffers;
-changed lines use Engine's capacity-preserving update. Placement and tint are
-per-draw values and do not rewrite shared glyph layout. Engine 0.3's high-level
-GPU text API accepts UTF-8, not a pre-shaped CPU line, so a changed line is
-currently shaped again when first prepared for desktop drawing.
+changed lines use Engine's capacity-preserving `update_from_shaped`. Placement
+and tint are per-draw values and do not rewrite shared glyph layout. At display
+scale 1.0, `prepare_from_shaped` and `update_from_shaped` borrow the exact line
+already prepared by Logic, so GPU preparation does not repeat shaping.
+
+There is one explicit DPI boundary: canonical labels prepare at scale 1.0,
+while Engine checks the exact DPI of a prepared line against its atlas. At
+other scales the desktop bridge prepares a temporary matching-DPI CPU line
+before handing it to the atlas; it never rewrites provenance to bypass the
+check. This fallback occurs only on changed text/font or resource rebuild.
+Unchanged runs skip it completely. Eliminating this additional shaping at
+non-unit DPI would require a separate Engine layout/raster-style contract;
+it is not claimed by this integration.
 
 Font registrations bound the number of retained atlases. The frozen active
 label limit and each font's run budget bound retained label buffers, including
@@ -189,7 +241,8 @@ characters are rejected. Missing glyphs report an error instead of silently
 changing fonts. Labels currently have no independent user-specified clip;
 normal target clipping still applies.
 
-See [CPU tests](../../src/text/tests.rs) and
+See [CPU tests](../../src/text/tests.rs),
+[prepared-label/session tests](../../tests/text_preparation.rs), and
 [headless runtime tests](../../tests/screen_text.rs) for executable contracts.
 
 The CPU benchmark separates allocation counting from timing:

@@ -16,17 +16,16 @@ is embedded; there are no downloaded game assets. Sound is not enabled.
 
 ## Renderer limitation
 
-**This prototype is not yet a reliable free-camera release.** A native camera
-traversal reproduced Engine 0.3.0's `UnportableSurfaceTopology` rejection in a
-valid generated chunk. The desktop runner currently exits on that rendering
-error; unsaved edits are then lost. Startup and resize passed, but that does
-not establish safe navigation through every camera pose.
+This prototype pins Engine `0.4.0-dev.4`, exact Git revision `1afbc7c5`, and
+explicitly selects `ThreeDSurfacePolicy::Native` for the free camera. The
+library's default remains StrictPortable. No camera-coordinate workaround or
+second renderer is used.
 
-A small camera-coordinate offset was tested and did not fix the rejection;
-it is not part of the game. The failure is inside Engine's conservative
-projected-triangle orientation validation, not World persistence or voxel
-collision. Fixing that rendering capability requires an Engine update. Keep
-manual saves and treat this as an integration prototype until then.
+This is a development integration, not the final Engine release. A one-sided
+block is intentionally invisible from inside. Transparent panes are separate
+objects; intersecting transparent surfaces and triangles within one mesh are
+not correctly sorted in general. Ordinary mipmaps can reduce leaf-mask coverage
+at a distance. Keep manual saves: other fatal rendering errors still exit.
 
 ## Controls
 
@@ -42,6 +41,11 @@ manual saves and treat this as an integration prototype until then.
 | N or Other world | Travel to the other region |
 | P or Pause | Pause/resume; the interface remains active |
 | F5 / F9 | Save / load both regions and inventory |
+| L | Compare Lambert lighting with Unlit colors |
+| F | Toggle distance fog |
+| M | Toggle complete texture mip chains |
+| T | Paint a small region of the gray study board's texture |
+| V | Switch perspective / orthographic projection |
 | Escape | Exit |
 
 The mouse position decides whether a click belongs to the UI or play area.
@@ -91,8 +95,12 @@ appear in the HUD and do not replace the running game.
 Sim;Logic supplies ECS, ordered systems, fixed time, Commands, input ownership,
 typed edit events, Application Resources, World replacement, managed text and
 the 3D bridge. Sim;Engine owns the actual mesh rendering, clipping and depth
-buffer. Directional face colors are baked by the game's mesher; they are not
-a new lighting engine.
+buffer, normal-based illumination, fog, mip generation and GPU uploads.
+The mesher supplies face normals, UVs and a small vertex tint. Five independent
+procedural tiles need no downloaded assets. Leaves use Mask; two floating
+study panes use Blend. The panels have no collision or saved block identity.
+The gray board starts with the terrain's shared stone texture: painting it
+isolates the board, then repeated patches can reuse its GPU allocation.
 
 ## Loading and update order
 
@@ -119,15 +127,37 @@ runtime's normal policy; old press occurrences are not replayed in the new World
 
 Each region is 24 x 16 x 24 cells, split into eighteen 8-cube chunks. Only exposed
 faces are emitted, grouped by material and top/side/bottom shade: at most 270
-mesh objects, not one entity per block. Changed chunks and their affected
-boundary neighbors rebuild; unchanged chunks keep their shared mesh assets.
+terrain mesh objects plus four study panels, not one entity per block. Changed
+chunks and their affected boundary neighbors rebuild; surviving material/shade
+parts retain their entities and Engine object IDs across mesh revisions.
+Unchanged chunks keep their shared mesh assets.
 Both regions remain in memory, but only the active one has a render projection.
 
-This example deliberately has no infinite streaming, textures, transparency,
-lighting, crafting, multiplayer, sound or general drag-and-drop inventory.
+This example deliberately has no infinite streaming, crafting, multiplayer,
+sound or general drag-and-drop inventory.
 The bottom buttons are a small hotbar, not a full widget toolkit. Layout is
 responsive; extremely small windows can still clip fixed-size font labels.
-The game does not claim to exercise every optional feature in the framework.
+The game exercises new Engine 0.4 capabilities, not every optional feature in
+the framework. Lighting is ambient plus one directional source: no shadows,
+point lights or physically based materials.
+
+## Bounded integration drive
+
+```bash
+cargo run --release --features text --example voxel_sandbox -- --test-drive
+```
+
+This mode runs 96 camera poses per region, travels once, edits terrain and the
+board texture, toggles the presentation modes, and checks a save round-trip
+in memory. It closes itself and rejects skipped or incomplete presentation.
+It does not load or overwrite your save. The final report separates dynamic
+mesh/texture uploads from initial creation and prints asynchronous GPU pass
+diagnostics. Missing GPU samples are not reported as zero cost.
+
+This is a smoke drive, not a pixel oracle or an FPS guarantee. Standalone
+Engine recovery has a separate ignored regression in
+[engine_dev4_gpu.rs](../../tests/engine_dev4_gpu.rs); the Logic adapter restores
+whole scenes to retain texture alpha, repeat and UV settings.
 
 The shared model and runtime scenarios can run without a window:
 

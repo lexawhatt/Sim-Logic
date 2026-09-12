@@ -15,20 +15,24 @@ mod pointer;
 mod text;
 #[path = "desktop/three_d.rs"]
 mod three_d;
+#[path = "desktop/timing.rs"]
+mod timing;
 
 pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
 pub use sim_engine::FrameCacheBudget;
 #[cfg(feature = "text")]
 pub use text::DesktopTextError;
-pub use three_d::DesktopThreeDError;
+pub use three_d::{DesktopThreeDError, DesktopThreeDUpdates};
+pub use timing::{DesktopGpuTimingSample, DesktopGpuTimings};
 
 use std::{error::Error, fmt, sync::Arc, time::Instant};
 
 use sim_engine::{
-    FrameBudget, FrameComposerError, FramePassOptions, FrameReport, Mesh3dRenderReport,
-    RenderStatus, RendererConfigurationError, RendererFrameError, RendererInitError,
-    RendererPresentMode, RendererSurfaceStatus, WgpuRenderer, WgpuRendererOptions,
+    FrameBudget, FrameComposerError, FramePassOptions, FrameReport, GpuTimingSource,
+    Mesh3dRenderReport, RenderStatus, RendererConfigurationError, RendererFrameError,
+    RendererInitError, RendererPresentMode, RendererSurfaceStatus, WgpuRenderer,
+    WgpuRendererOptions,
 };
 use winit::{
     application::ApplicationHandler,
@@ -72,6 +76,7 @@ pub struct DesktopConfig {
     logical_height: f64,
     present_mode: RendererPresentMode,
     frame_cache: FrameCacheBudget,
+    gpu_timing: bool,
 }
 
 impl Default for DesktopConfig {
@@ -82,6 +87,7 @@ impl Default for DesktopConfig {
             logical_height: DEFAULT_HEIGHT,
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
+            gpu_timing: false,
         }
     }
 }
@@ -102,6 +108,7 @@ impl DesktopConfig {
             logical_height,
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
+            gpu_timing: false,
         })
     }
 
@@ -124,6 +131,22 @@ impl DesktopConfig {
     /// Returns the separate idle composition-cache budget.
     pub const fn frame_cache_budget(&self) -> FrameCacheBudget {
         self.frame_cache
+    }
+
+    /// Requests bounded asynchronous GPU pass timestamps, disabled by default.
+    ///
+    /// Unsupported adapters still start and report Engine's `Unavailable` status.
+    /// Collection never waits for the GPU; query/readback resources and polling
+    /// add explicitly reported diagnostic overhead. CPU and presentation time
+    /// are not substituted for missing measurements.
+    pub fn set_gpu_timing(&mut self, enabled: bool) -> &mut Self {
+        self.gpu_timing = enabled;
+        self
+    }
+
+    /// Returns whether optional GPU diagnostics were requested, not availability.
+    pub const fn gpu_timing(&self) -> bool {
+        self.gpu_timing
     }
 
     /// Returns the configured title.
@@ -210,6 +233,9 @@ pub struct DesktopRunReport {
     last_logic_frame: Option<LogicFrameReport>,
     last_render_frame: Option<FrameReport>,
     last_three_d_frame: Option<Mesh3dRenderReport>,
+    last_three_d_updates: Option<DesktopThreeDUpdates>,
+    three_d_updates: DesktopThreeDUpdates,
+    gpu_timings: DesktopGpuTimings,
 }
 
 impl DesktopRunReport {
@@ -261,6 +287,27 @@ impl DesktopRunReport {
     /// A frame without an enabled 3D view resets this value to None.
     pub const fn last_three_d_frame(&self) -> Option<Mesh3dRenderReport> {
         self.last_three_d_frame
+    }
+
+    /// Returns resource-update work from the latest successfully prepared 3D frame.
+    /// A presentation attempt without a 3D view resets this value to `None`.
+    /// Updates can have occurred even if subsequent surface presentation skipped.
+    pub const fn last_three_d_updates(&self) -> Option<DesktopThreeDUpdates> {
+        self.last_three_d_updates
+    }
+
+    /// Returns saturating totals across all successful 3D preparations in this run.
+    /// Device recovery does not reset these host totals. They exclude work from a
+    /// failed preparation and are not a measurement of opaque driver allocations.
+    pub const fn three_d_updates(&self) -> DesktopThreeDUpdates {
+        self.three_d_updates
+    }
+
+    /// Returns current-device hardware timing status, losses and bounded samples.
+    /// Samples are associated by exact submission ID and source, not arrival order.
+    /// Final collection is nonblocking, so pending work need not appear here.
+    pub const fn gpu_timings(&self) -> &DesktopGpuTimings {
+        &self.gpu_timings
     }
 
     fn record_application_exit(&mut self, report: LogicFrameReport) {
@@ -463,6 +510,7 @@ pub(crate) fn run<A: Action>(
     event_loop
         .run_app(&mut desktop)
         .map_err(DesktopRunError::EventLoop)?;
+    desktop.collect_gpu_timings();
     match desktop.fatal {
         Some(error) => Err(error),
         None => Ok(desktop.report),
@@ -525,6 +573,12 @@ impl<A: Action> DesktopHost<A> {
             self.fatal = Some(error);
         }
         event_loop.exit();
+    }
+
+    fn collect_gpu_timings(&mut self) {
+        if let Some(renderer) = self.renderer.as_mut() {
+            self.report.gpu_timings.collect(renderer);
+        }
     }
 
     fn collect_key(
@@ -646,6 +700,9 @@ impl<A: Action> DesktopHost<A> {
         if self.fatal.is_some() {
             return;
         }
+        // Service ready timestamps even when input, occlusion or an application
+        // exit prevents this redraw from submitting another frame.
+        self.collect_gpu_timings();
         if let Some(failure) = self.input_failure {
             let error = match failure {
                 InputBufferFailure::Limit => DesktopRunError::InputEventLimitExceeded {
@@ -741,6 +798,7 @@ impl<A: Action> DesktopHost<A> {
             return;
         };
         self.report.last_three_d_frame = None;
+        self.report.last_three_d_updates = None;
         if extracted.three_d().is_none() {
             // A World with no active 3D view must not keep a retired World's
             // chunk revisions alive through renderer caches.
@@ -757,11 +815,18 @@ impl<A: Action> DesktopHost<A> {
                     self.frame_budget,
                     three_d::color_target_bytes(renderer)?,
                 )?;
-                self.report.last_three_d_frame = Some(self.three_d.prepare(
-                    renderer,
-                    snapshot,
-                    self.three_d_limits,
-                )?);
+                let three_d_report =
+                    self.three_d
+                        .prepare(renderer, snapshot, self.three_d_limits)?;
+                self.report.gpu_timings.submitted(
+                    report.frame_index(),
+                    GpuTimingSource::Scene3d,
+                    three_d_report.gpu_timing_id(),
+                );
+                self.report.last_three_d_frame = Some(three_d_report);
+                let updates = self.three_d.updates();
+                self.report.last_three_d_updates = Some(updates);
+                self.report.three_d_updates.accumulate(updates);
                 images::present(
                     renderer,
                     extracted,
@@ -821,6 +886,11 @@ impl<A: Action> DesktopHost<A> {
         };
         match presentation {
             Ok(render_report) => {
+                self.report.gpu_timings.submitted(
+                    report.frame_index(),
+                    GpuTimingSource::FrameComposer,
+                    render_report.gpu_timing_id(),
+                );
                 self.report.last_render_frame = Some(render_report);
                 match render_report.status() {
                     RenderStatus::Drawn => {
@@ -860,9 +930,25 @@ impl<A: Action> DesktopHost<A> {
                     match pollster::block_on(renderer.recover_device_and_surface()) {
                         Ok(()) => {
                             self.images.clear();
-                            self.three_d.clear();
                             self.report.device_recoveries =
                                 self.report.device_recoveries.saturating_add(1);
+                            self.report.gpu_timings.reset(
+                                self.report.device_recoveries,
+                                renderer.gpu_timing_statistics(),
+                            );
+                            self.report.last_render_frame = None;
+                            self.report.last_three_d_frame = None;
+                            self.report.last_three_d_updates = None;
+                            if let Err(error) = self.three_d.restore(renderer) {
+                                self.stop(
+                                    event_loop,
+                                    DesktopRunError::ThreeDPreparation {
+                                        error,
+                                        logic_frame: Box::new(report),
+                                    },
+                                );
+                                return;
+                            }
                             if reset_wall_clock_on_success {
                                 self.last_frame = Instant::now();
                             }
@@ -954,7 +1040,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             }
         };
         let options = match WgpuRendererOptions::new(self.config.present_mode, scale_factor) {
-            Ok(options) => options,
+            Ok(options) => options.with_gpu_timing(self.config.gpu_timing),
             Err(error) => {
                 self.stop(event_loop, DesktopRunError::RendererConfiguration(error));
                 return;
@@ -975,6 +1061,9 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         let notify_window = Arc::clone(&window);
         renderer.set_frame_cache_budget(self.config.frame_cache);
         renderer.set_pre_present_notify(move || notify_window.pre_present_notify());
+        self.report
+            .gpu_timings
+            .reset(0, renderer.gpu_timing_statistics());
         self.window_occluded = extent_is_occluded(size.width, size.height);
         self.last_frame = Instant::now();
         self.window = Some(window);
@@ -1224,6 +1313,11 @@ fn map_key(key: PhysicalKey) -> Option<PhysicalKeyCode> {
         PhysicalKey::Code(KeyCode::F6) => Some(PhysicalKeyCode::F6),
         PhysicalKey::Code(KeyCode::F8) => Some(PhysicalKeyCode::F8),
         PhysicalKey::Code(KeyCode::F9) => Some(PhysicalKeyCode::F9),
+        PhysicalKey::Code(KeyCode::KeyL) => Some(PhysicalKeyCode::KeyL),
+        PhysicalKey::Code(KeyCode::KeyF) => Some(PhysicalKeyCode::KeyF),
+        PhysicalKey::Code(KeyCode::KeyM) => Some(PhysicalKeyCode::KeyM),
+        PhysicalKey::Code(KeyCode::KeyT) => Some(PhysicalKeyCode::KeyT),
+        PhysicalKey::Code(KeyCode::KeyV) => Some(PhysicalKeyCode::KeyV),
         PhysicalKey::Code(_) | PhysicalKey::Unidentified(_) => None,
     }
 }
@@ -1363,6 +1457,26 @@ mod tests {
     }
 
     #[test]
+    fn gpu_timing_is_explicitly_opt_in_without_changing_window_or_cache_settings() {
+        let mut config = DesktopConfig::new("GPU diagnostics", 960.0, 540.0).unwrap();
+        let before = config.clone();
+        assert!(!DesktopConfig::default().gpu_timing());
+        assert!(!config.gpu_timing());
+        config.set_gpu_timing(true);
+        assert!(config.gpu_timing());
+        let options = WgpuRendererOptions::new(config.present_mode(), 1.25)
+            .unwrap()
+            .with_gpu_timing(config.gpu_timing());
+        assert!(options.gpu_timing());
+        config.set_gpu_timing(false);
+        assert_eq!(config, before);
+        let report = DesktopRunReport::default();
+        assert!(report.gpu_timings().statistics().is_none());
+        assert!(report.last_three_d_updates().is_none());
+        assert_eq!(report.three_d_updates(), DesktopThreeDUpdates::default());
+    }
+
+    #[test]
     fn screen_pass_is_optional_and_always_follows_the_world() {
         assert!(screen_pass_options(0).is_none());
         for count in [1, 256, usize::MAX] {
@@ -1414,6 +1528,11 @@ mod tests {
             (KeyCode::F6, PhysicalKeyCode::F6),
             (KeyCode::F8, PhysicalKeyCode::F8),
             (KeyCode::F9, PhysicalKeyCode::F9),
+            (KeyCode::KeyL, PhysicalKeyCode::KeyL),
+            (KeyCode::KeyF, PhysicalKeyCode::KeyF),
+            (KeyCode::KeyM, PhysicalKeyCode::KeyM),
+            (KeyCode::KeyT, PhysicalKeyCode::KeyT),
+            (KeyCode::KeyV, PhysicalKeyCode::KeyV),
         ];
 
         assert_eq!(mappings.map(|(_, portable)| portable), ALL_PHYSICAL_KEYS);

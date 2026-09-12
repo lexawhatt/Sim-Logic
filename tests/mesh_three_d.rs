@@ -77,9 +77,14 @@ fn unsupported_geometry_and_atomic_value_rejections_are_explicit() -> LogicResul
         vec![0, 1, 2],
         vec![],
     )?;
+    // dev.4 preserves UV attributes; an actual texture is optional and attached
+    // independently through MeshVisual3d::set_texture.
     assert_eq!(
-        MeshAsset3d::new(textured).err(),
-        Some(MeshVisualError::UnsupportedTopology)
+        MeshAsset3d::new(textured)?
+            .mesh()
+            .texture_coordinates()
+            .len(),
+        3
     );
     let mut visual = mesh()?;
     let original = visual.clone();

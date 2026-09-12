@@ -6,7 +6,7 @@ use crate::identity::{LogicEntity, WorldGeneration};
 
 use super::{CuboidVisual3d, CuboidVisualError, MeshSource, ResolvedMesh3d, View3d, View3dError};
 
-/// Frozen opt-in limits for opaque geometry and the separate desktop depth prepass.
+/// Frozen opt-in limits for geometry, textures and the desktop 3D passes.
 ///
 /// Defaults are all zero. Every visible cuboid consumes twelve triangles and
 /// at most twenty-four edge segments when both wireframe modes are selected.
@@ -20,6 +20,8 @@ pub struct ThreeDRenderLimits {
     max_target_pixels: u64,
     max_meshes: usize,
     max_mesh_source_bytes: usize,
+    max_texture_source_bytes: usize,
+    max_texture_gpu_bytes: usize,
 }
 
 impl ThreeDRenderLimits {
@@ -31,6 +33,8 @@ impl ThreeDRenderLimits {
             max_target_pixels,
             max_meshes: 0,
             max_mesh_source_bytes: 0,
+            max_texture_source_bytes: 0,
+            max_texture_gpu_bytes: 0,
         }
     }
 
@@ -49,7 +53,7 @@ impl ThreeDRenderLimits {
         self.max_target_pixels
     }
 
-    /// Enables opaque custom meshes with inclusive instance and CPU-source caps.
+    /// Enables custom meshes with inclusive instance and CPU-source caps.
     ///
     /// Source capacities are conservatively charged once per visible instance,
     /// even when instances share an asset. Triangle limits include both cuboids
@@ -70,6 +74,30 @@ impl ThreeDRenderLimits {
     pub const fn max_mesh_source_bytes(self) -> usize {
         self.max_mesh_source_bytes
     }
+
+    /// Enables textures with inclusive base-source and complete-mip texel caps.
+    /// Both are conservatively charged per visible instance, including shared
+    /// images. Engine additionally bounds its CPU mip storage, GPU resources and
+    /// transient updates; these caps do not claim to measure driver allocations.
+    pub const fn with_texture_limits(
+        mut self,
+        max_source_bytes: usize,
+        max_gpu_bytes: usize,
+    ) -> Self {
+        self.max_texture_source_bytes = max_source_bytes;
+        self.max_texture_gpu_bytes = max_gpu_bytes;
+        self
+    }
+
+    /// Returns the per-visible-instance summed base-pixel capacity allowance.
+    pub const fn max_texture_source_bytes(self) -> usize {
+        self.max_texture_source_bytes
+    }
+
+    /// Returns the per-visible-instance summed nominal full-mip texel allowance.
+    pub const fn max_texture_gpu_bytes(self) -> usize {
+        self.max_texture_gpu_bytes
+    }
 }
 
 /// Identifies which independent 3D work limit was exceeded.
@@ -81,6 +109,10 @@ pub enum ThreeDLimitResource {
     Meshes,
     /// CPU topology capacities charged once per visible custom-mesh instance.
     MeshSourceBytes,
+    /// Base texture pixel capacities charged per visible textured mesh instance.
+    TextureSourceBytes,
+    /// Nominal complete-chain texture bytes charged per visible instance.
+    TextureGpuBytes,
     /// Filled surface triangles from cuboids and custom meshes.
     Triangles,
     /// Physical pixels in the color/depth target pair.
@@ -128,7 +160,7 @@ pub struct ThreeDSnapshot<'a> {
 }
 
 impl<'a> ThreeDSnapshot<'a> {
-    /// Returns the enabled camera and opaque clear descriptor.
+    /// Returns the enabled camera, environment and normalized RGBA clear descriptor.
     pub const fn view(self) -> View3d {
         self.view
     }
@@ -138,7 +170,7 @@ impl<'a> ThreeDSnapshot<'a> {
         self.cuboids
     }
 
-    /// Returns opaque meshes in stable managed-identity extraction order.
+    /// Returns surface meshes in stable managed-identity extraction order.
     pub const fn meshes(self) -> &'a [ResolvedMesh3d] {
         self.meshes
     }

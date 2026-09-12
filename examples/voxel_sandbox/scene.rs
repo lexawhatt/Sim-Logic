@@ -1,10 +1,12 @@
 //! Factories build only a valid loading screen; saved terrain is projected later.
 
 use super::{
+    materials::{self, Palette, Settings},
     model::{Movement, RegionId},
+    showcase::{self, Showcase},
     view::{self, Button, Label, Layout, Panel},
 };
-use sim_logic::prelude::*;
+use sim_logic::{prelude::*, three_d::ThreeDSurfacePolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -40,10 +42,11 @@ pub struct Recipe {
     camera: ActiveCamera2d,
     view: View3d,
     outline: CuboidVisual3d,
+    studies: Vec<(Showcase, MeshVisual3d)>,
 }
 
 impl Recipe {
-    pub fn new(region: RegionId, font: &TextFont) -> LogicResult<Self> {
+    pub fn new(region: RegionId, font: &TextFont, palette: &Palette) -> LogicResult<Self> {
         let layout = Layout::new(LogicalViewport::new(1100.0, 720.0)?);
         let mut panels = Vec::new();
         for panel in [
@@ -77,11 +80,17 @@ impl Recipe {
             labels.push((label, view::text(font, label, caption, layout)?));
         }
         let mut view = View3d::new(Vec3::new(12.5, 7.0, 12.5)?, Vec3::new(12.5, 5.0, 8.5)?)?;
+        // Filled voxel surfaces need ordinary hardware clipping for arbitrary
+        // player poses. The library's strict scientific default is unchanged.
+        view.set_surface_policy(ThreeDSurfacePolicy::Native);
         view.set_background(match region {
             RegionId::Meadow => Color::rgb8(119, 178, 221),
             RegionId::Canyon => Color::rgb8(185, 136, 116),
         })?;
         view.set_enabled(false);
+        let (lighting, fog) = materials::environment(region)?;
+        view.set_lighting(lighting);
+        view.set_fog(Some(fog));
         let mut outline = CuboidVisual3d::new(
             Vec3::ZERO,
             Vec3::new(1.0, 0.012, 0.012)?,
@@ -95,6 +104,7 @@ impl Recipe {
             camera: ActiveCamera2d::centered(1.0)?,
             view,
             outline,
+            studies: showcase::build(palette)?,
         })
     }
 
@@ -102,6 +112,11 @@ impl Recipe {
         let camera = world.spawn(self.camera)?;
         world.insert_resource(self.view)?;
         world.insert_resource(super::presentation::HudCache::default())?;
+        world.insert_resource(Settings::default())?;
+        world.insert_resource(showcase::PatchState::default())?;
+        for (kind, visual) in &self.studies {
+            world.spawn((*kind, visual.clone()))?;
+        }
         for (panel, visual) in &self.panels {
             world.spawn((*panel, *visual))?;
         }

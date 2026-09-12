@@ -2,6 +2,7 @@
 
 use super::{
     app::Session,
+    materials::{self, Settings},
     model::{Block, RegionId},
     scene::{Local, Phase, SelectionEdge},
     view::{self, Button, Label, Layout, Panel},
@@ -103,6 +104,7 @@ pub fn present(
     local: Res<Local>,
     session: AppRes<Session>,
     fonts: AppRes<view::Fonts>,
+    settings: Res<Settings>,
     mut view: ResMut<View3d>,
     mut cache: ResMut<HudCache>,
     mut panels: Query<(&Panel, &mut ScreenRectangleVisual)>,
@@ -122,6 +124,24 @@ pub fn present(
         )?,
     )?;
     view.set_enabled(ready);
+    if settings.orthographic != view.orthographic_span().is_some() {
+        if settings.orthographic {
+            view.set_orthographic(
+                WorldLength::new(12.0)?,
+                WorldLength::new(0.1)?,
+                WorldLength::new(1000.0)?,
+            )?;
+        } else {
+            view.set_perspective(
+                std::f32::consts::FRAC_PI_3,
+                WorldLength::new(0.1)?,
+                WorldLength::new(1000.0)?,
+            )?;
+        }
+    }
+    let (lighting, fog) = materials::environment(local.region)?;
+    view.set_lighting(lighting);
+    view.set_fog(settings.fog.then_some(fog));
     let target = ready.then(|| session.game.target()).flatten();
     let stamp = Stamp {
         region: local.region,
@@ -134,12 +154,20 @@ pub fn present(
         rebuilt: local.rebuilt_chunks,
     };
     let changed = cache.stamp.as_ref() != Some(&stamp) || cache.notice != session.notice;
+    // Reuse one parsed face/plan for the changed HUD batch. Its borrow is local,
+    // not a self-referential World resource; unchanged frames construct none.
+    let font = fonts.at(layout);
+    let mut preparation = if changed {
+        Some(font.shaping_session()?)
+    } else {
+        None
+    };
     for (label, mut visual) in &mut labels {
         let (position, _) = layout.label(*label);
         visual.set_position(position)?;
-        visual.set_font(fonts.at(layout).clone())?;
-        if changed {
-            visual.set_text(&caption(*label, &stamp, &session.notice))?;
+        visual.set_font(font.clone())?;
+        if let Some(shaping) = preparation.as_mut() {
+            visual.set_text_with_session(shaping, &caption(*label, &stamp, &session.notice))?;
         }
     }
     if changed {

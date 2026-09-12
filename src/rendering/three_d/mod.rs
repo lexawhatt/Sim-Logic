@@ -1,15 +1,16 @@
-//! Opt-in, bounded opaque cuboids and host-built surface meshes.
+//! Opt-in, bounded cuboids and host-built surface meshes.
 //!
 //! These presentation values require no window or GPU. They are sampled
 //! directly during extraction, without fixed-step interpolation. The desktop
 //! bridge retains immutable topology and composes a real depth-buffered 3D target
-//! above the 2D world and below every screen overlay. Sim;Engine 0.3 clips filled
-//! triangles against the view frustum within explicit topology budgets. The
+//! above the 2D world and below every screen overlay. Sim;Engine owns filled
+//! surface projection, materials, textures, lighting and fog. The
 //! desktop bridge attributes object-specific failures to the source entity.
 
 mod extraction;
 mod mesh;
 mod mesh_extraction;
+mod texture;
 mod view;
 mod visual;
 
@@ -21,7 +22,8 @@ pub use extraction::{
 pub use mesh::{MeshAsset3d, MeshVisual3d, MeshVisualError};
 pub(crate) use mesh_extraction::MeshSource;
 pub use mesh_extraction::ResolvedMesh3d;
-pub use view::{View3d, View3dError};
+pub use texture::{TextureAsset3d, TextureVisual3d, TextureVisualError};
+pub use view::{ThreeDSurfacePolicy, View3d, View3dError};
 pub use visual::{CuboidVisual3d, CuboidVisualError};
 
 // One shared topology for CPU geometry validation and the retained GPU mesh.

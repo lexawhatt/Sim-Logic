@@ -3,23 +3,26 @@
 use std::{error::Error, fmt, mem::size_of};
 
 use sim_engine::{
-    LogicalViewport, LogicalViewportError, Mesh3d, Mesh3dError, Mesh3dRenderBudget,
-    Mesh3dRenderError, Mesh3dRenderReport, Mesh3dResourceError, MeshEdge3d, MeshStyle3d,
-    Object3dId, RenderTarget2d, RenderTarget3d, RetainedMesh3d, Scene3d, Scene3dBudget,
-    Scene3dError, Transform3d, Vec3, WgpuRenderer,
+    DynamicMesh3dError, LogicalViewport, LogicalViewportError, Mesh3d, Mesh3dError,
+    Mesh3dRenderBudget, Mesh3dRenderError, Mesh3dRenderReport, Mesh3dResourceError, MeshEdge3d,
+    MeshStyle3d, Object3dId, RenderTarget2d, RenderTarget3d, RetainedMesh3d, Scene3d,
+    Scene3dBudget, Scene3dError, SurfaceRasterization3d, Texture3dError, Texture3dUpdateError,
+    Transform3d, Vec3, WgpuRenderer,
 };
 
 use crate::{
     identity::LogicEntity,
     three_d::{
         CORNERS, CuboidVisualError, MeshVisualError, TRIANGLES, ThreeDLimitResource,
-        ThreeDRenderLimits, ThreeDSnapshot, View3dError,
+        ThreeDRenderLimits, ThreeDSnapshot, ThreeDSurfacePolicy, View3dError,
     },
 };
 
 #[path = "three_d/meshes.rs"]
 mod meshes;
 use meshes::CustomMeshes;
+#[path = "three_d/textures.rs"]
+mod textures;
 
 /// A bounded 3D preparation or separate depth-prepass failure.
 ///
@@ -67,6 +70,27 @@ pub enum DesktopThreeDError {
         source: LogicEntity,
         /// Concrete value error.
         error: MeshVisualError,
+    },
+    /// Engine rejected a scene-owned mesh revision before publishing it.
+    DynamicMesh {
+        /// Managed source of the revision.
+        source: LogicEntity,
+        /// Original bounded update error.
+        error: DynamicMesh3dError,
+    },
+    /// Texture creation or material binding failed.
+    Texture {
+        /// Managed source of the texture.
+        source: LogicEntity,
+        /// Original Engine texture error.
+        error: Texture3dError,
+    },
+    /// An isolated texture patch failed before publication.
+    TextureUpdate {
+        /// Managed source of the patch.
+        source: LogicEntity,
+        /// Original Engine update error.
+        error: Texture3dUpdateError,
     },
     /// A managed 3D object could not be inserted or updated in the retained scene.
     Object {
@@ -120,6 +144,15 @@ impl fmt::Display for DesktopThreeDError {
             Self::CustomMesh { source, error } => {
                 write!(formatter, "3D mesh {source:?} style failed: {error}")
             }
+            Self::DynamicMesh { source, error } => {
+                write!(formatter, "3D mesh {source:?} update failed: {error}")
+            }
+            Self::Texture { source, error } => {
+                write!(formatter, "3D texture {source:?} failed: {error}")
+            }
+            Self::TextureUpdate { source, error } => {
+                write!(formatter, "3D texture {source:?} patch failed: {error}")
+            }
             Self::Object { source, error } => write!(
                 formatter,
                 "3D object {source:?} scene update failed: {error}"
@@ -147,10 +180,60 @@ impl Error for DesktopThreeDError {
             Self::Scene(error) => Some(error),
             Self::Cuboid { error, .. } => Some(error),
             Self::CustomMesh { error, .. } => Some(error),
+            Self::DynamicMesh { error, .. } => Some(error),
+            Self::Texture { error, .. } => Some(error),
+            Self::TextureUpdate { error, .. } => Some(error),
             Self::Object { error, .. } => Some(error),
             Self::ObjectRender { error, .. } => Some(error),
             Self::Render(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+/// Actual uploads performed by scene-owned updates during one 3D preparation.
+/// Initial resource creation and ordinary frame uniforms are not included.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DesktopThreeDUpdates {
+    /// Accepted mesh revision count, including alias detachment and growth.
+    pub mesh_updates: usize,
+    /// Bytes uploaded by accepted mesh revisions.
+    pub mesh_upload_bytes: usize,
+    /// New GPU buffers allocated by mesh revisions, not initial creation.
+    pub mesh_gpu_allocations: usize,
+    /// Accepted immediate-parent texture patches.
+    pub texture_updates: usize,
+    /// Patch and regenerated lower-mip upload bytes.
+    pub texture_upload_bytes: usize,
+    /// New GPU textures allocated by patches, including alias detachment.
+    pub texture_gpu_allocations: usize,
+}
+
+impl DesktopThreeDUpdates {
+    pub(super) fn accumulate(&mut self, other: Self) {
+        self.mesh_updates = self.mesh_updates.saturating_add(other.mesh_updates);
+        self.mesh_upload_bytes = self
+            .mesh_upload_bytes
+            .saturating_add(other.mesh_upload_bytes);
+        self.mesh_gpu_allocations = self
+            .mesh_gpu_allocations
+            .saturating_add(other.mesh_gpu_allocations);
+        self.texture_updates = self.texture_updates.saturating_add(other.texture_updates);
+        self.texture_upload_bytes = self
+            .texture_upload_bytes
+            .saturating_add(other.texture_upload_bytes);
+        self.texture_gpu_allocations = self
+            .texture_gpu_allocations
+            .saturating_add(other.texture_gpu_allocations);
+    }
+    const fn empty() -> Self {
+        Self {
+            mesh_updates: 0,
+            mesh_upload_bytes: 0,
+            mesh_gpu_allocations: 0,
+            texture_updates: 0,
+            texture_upload_bytes: 0,
+            texture_gpu_allocations: 0,
         }
     }
 }
@@ -187,6 +270,41 @@ impl DesktopThreeD {
         self.target.get().map(RenderTarget3d::color_target)
     }
 
+    pub(super) fn updates(&self) -> DesktopThreeDUpdates {
+        self.custom.updates
+    }
+
+    /// Restore the scene as a unit: Engine preserves IDs, aliases and material
+    /// settings. CPU slot metadata remains valid; targets are recreated lazily.
+    pub(super) fn restore(&mut self, renderer: &WgpuRenderer) -> Result<(), DesktopThreeDError> {
+        if let Some(scene) = &mut self.scene {
+            renderer
+                .restore_scene3d(scene)
+                .map_err(DesktopThreeDError::Resource)?;
+        }
+        if let Some(slot) = self.slots.first() {
+            self.mesh = Some(
+                self.scene
+                    .as_ref()
+                    .ok_or(DesktopThreeDError::InvalidCache)?
+                    .instance(slot.id)
+                    .map_err(DesktopThreeDError::Scene)?
+                    .mesh()
+                    .clone(),
+            );
+        } else if let Some(mesh) = &self.mesh {
+            // This built-in mesh has no texture/material. Custom textured meshes
+            // exclusively use restore_scene3d (standalone dev.4 loses settings).
+            self.mesh = Some(
+                renderer
+                    .restore_mesh3d(mesh)
+                    .map_err(DesktopThreeDError::Resource)?,
+            );
+        }
+        self.target.clear();
+        Ok(())
+    }
+
     pub(super) fn prepare(
         &mut self,
         renderer: &mut WgpuRenderer,
@@ -217,9 +335,11 @@ impl DesktopThreeD {
             .as_ref()
             .is_none_or(|scene| scene.background() != snapshot.view().background())
         {
-            let scene =
-                Scene3d::with_budget(snapshot.view().background(), engine_scene_budget(limits)?)
-                    .map_err(DesktopThreeDError::Scene)?;
+            let scene = Scene3d::with_alpha_background_and_budget(
+                snapshot.view().background(),
+                engine_scene_budget(limits)?,
+            )
+            .map_err(DesktopThreeDError::Scene)?;
             self.scene = Some(scene);
             // New scene IDs also invalidate every last-applied field together.
             self.slots.clear();
@@ -229,6 +349,8 @@ impl DesktopThreeD {
             .scene
             .as_mut()
             .ok_or(DesktopThreeDError::InvalidCache)?;
+        scene.set_lighting(snapshot.view().lighting());
+        scene.set_fog(snapshot.view().fog());
         for (index, record) in snapshot.cuboids().iter().enumerate() {
             let source = record.source();
             let style = record
@@ -272,7 +394,7 @@ impl DesktopThreeD {
                 .map_err(DesktopThreeDError::Scene)?;
         }
         self.custom
-            .prepare(renderer, scene, snapshot.meshes(), limits, mesh)?;
+            .prepare(renderer, scene, snapshot.meshes(), limits)?;
         let descriptor = TargetDescriptor {
             width,
             height,
@@ -396,8 +518,8 @@ fn engine_scene_budget(limits: ThreeDRenderLimits) -> Result<Scene3dBudget, Desk
     let defaults = Scene3dBudget::default();
     // Engine requires a nonzero object ceiling even for a background-only
     // scene. Logic's earlier count check still prohibits objects at a zero cap.
-    // Keep finite Engine memory ceilings; this bridge owns one shared cube and
-    // no textured meshes. Larger author object limits cannot bypass byte caps.
+    // Keep finite Engine geometry ceilings. CPU texture source limits cover
+    // base snapshots; the GPU texel allowance also covers Engine recovery mips.
     Scene3dBudget::new(
         limits
             .max_cuboids()
@@ -407,57 +529,39 @@ fn engine_scene_budget(limits: ThreeDRenderLimits) -> Result<Scene3dBudget, Desk
         defaults.max_mesh_cpu_bytes(),
         defaults.max_mesh_gpu_bytes(),
     )
-    .map(|budget| budget.with_texture_limits(0, 0))
+    .map(|budget| {
+        budget.with_texture_limits(
+            limits.max_texture_gpu_bytes(),
+            limits.max_texture_gpu_bytes(),
+        )
+    })
     .map_err(DesktopThreeDError::Scene)
 }
 
 #[cfg(test)]
 fn engine_render_budget(count: usize, limits: ThreeDRenderLimits) -> Mesh3dRenderBudget {
-    // Engine caps generated topology, while Logic caps all submitted triangles.
-    // Every crossing object replaces its entire 12-triangle cube with generated
-    // geometry. Reserving room for count-1 retained cubes therefore preserves
-    // the total ceiling without a second clipping implementation or preflight.
-    // This is conservative when multiple cubes cross: Engine 0.3 preflight does
-    // not expose the retained/total submitted triangle count needed to relax it.
-    // Saturation fails closed even for arithmetic beyond a valid count check.
-    let retained_triangles = count.saturating_sub(1).saturating_mul(12);
-    generated_budget(retained_triangles, count != 0, limits)
+    generated_budget(count != 0, limits)
 }
 
 fn snapshot_render_budget(
     snapshot: ThreeDSnapshot<'_>,
     limits: ThreeDRenderLimits,
 ) -> Mesh3dRenderBudget {
-    let minimum = snapshot
-        .meshes()
-        .iter()
-        .map(|mesh| mesh.visual().asset().mesh().triangle_count())
-        .chain((!snapshot.cuboids().is_empty()).then_some(12))
-        .min();
-    // If any object crosses, at least the smallest object's retained topology
-    // is replaced by generated geometry. Reserve all other source triangles.
-    // This conservative cap includes mixed cuboids and arbitrary chunk sizes.
-    generated_budget(
-        snapshot
-            .source_triangle_count()
-            .saturating_sub(minimum.unwrap_or(0)),
-        minimum.is_some(),
-        limits,
+    generated_budget(snapshot.source_triangle_count() != 0, limits).with_surface_policy(
+        match snapshot.view().surface_policy() {
+            ThreeDSurfacePolicy::StrictPortable => SurfaceRasterization3d::StrictPortable,
+            ThreeDSurfacePolicy::Native => SurfaceRasterization3d::Native,
+        },
     )
 }
 
-fn generated_budget(
-    retained_triangles: usize,
-    has_objects: bool,
-    limits: ThreeDRenderLimits,
-) -> Mesh3dRenderBudget {
+fn generated_budget(has_objects: bool, limits: ThreeDRenderLimits) -> Mesh3dRenderBudget {
     let defaults = Mesh3dRenderBudget::default();
     let triangles = if !has_objects {
         0
     } else {
         limits
             .max_triangles()
-            .saturating_sub(retained_triangles)
             .min(defaults.max_generated_triangles())
     };
     Mesh3dRenderBudget::new(
@@ -469,6 +573,7 @@ fn generated_budget(
         // private byte strides here; retain its explicit finite upload ceiling.
         defaults.max_generated_upload_bytes(),
     )
+    .with_max_surface_triangles(limits.max_triangles())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -903,3 +1008,7 @@ mod tests {
 #[cfg(test)]
 #[path = "three_d/migration_tests.rs"]
 mod migration_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "three_d/gpu_tests.rs"]
+mod gpu_tests;

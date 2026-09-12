@@ -4,12 +4,13 @@
 
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
-opaque background. This is real geometric 3D, not projected screen rectangles.
-The bridge uses Sim;Engine 0.3.0 and supports colored cuboids with optional
-outer-edge outlines, plus host-built opaque surface meshes. Mesh file import,
-textures, lights, shadows, transparency, and 3D picking are not supplied by
-this Logic bridge. Engine's broader texture API does not automatically make
-textured materials managed Logic components.
+background. This is real geometric 3D, not projected screen rectangles.
+The bridge pins Engine `0.4.0-dev.4` at git revision
+`1afbc7c5a71a7aabafe41d16ac2502bef7424e2f`, an integration candidate rather than
+the final registry release. Cuboids keep their simple opaque/outline API.
+Host-built meshes support vertex colors, UVs, normals, Opaque/Mask/Blend
+materials, textures and explicit lighting/fog. Mesh import, normal generation,
+shadows, point lights and 3D picking remain outside this bridge.
 
 The components, camera values, and extracted records work without a window or
 GPU. Desktop rendering requires the `desktop` feature. See the
@@ -76,7 +77,7 @@ standard approved components; no extra component approval is needed.
 ## Host-built meshes and editable chunks
 
 `MeshAsset3d` wraps Engine's immutable, shared CPU `Mesh3d`. `MeshVisual3d`
-adds one transform, opaque color, and visibility. Both work headlessly; no
+adds one transform, surface policy, optional texture, and visibility. Both work headlessly; no
 renderer handle belongs in an ECS component. `MeshVisual3d` is already approved.
 
 ```rust
@@ -106,8 +107,10 @@ tests sharing without comparing all vertices. Construct a new asset only for
 changed geometry, then call `visual.set_asset(new_asset)?`. Transform and asset
 setters validate transformed geometry before changing the component; color
 changes do not scan topology. Extraction clones shared handles, not vertex
-arrays. Textured and edge-only topology returns `UnsupportedTopology`; display
-edges on a surface mesh are retained but not drawn by this flat-color bridge.
+arrays. Engine `Mesh3d::with_attributes` supplies UVs, vertex colors and normals;
+Logic preserves them without copying. Edge-only topology returns
+`UnsupportedTopology`; display edges on a surface mesh are retained but not
+drawn by this surface bridge.
 
 For a voxel application, generate only exposed faces and group geometry by
 chunk and surface color. Terrain rules, dirty-chunk selection, meshing, picking,
@@ -115,16 +118,124 @@ and saves belong to the application. The bridge does not introduce voxel rules
 or a second renderer. An empty chunk needs no mesh component/entity: Engine
 topology requires nonempty geometry.
 
-The desktop cache retains only assets referenced by the current visible mesh
-snapshot. Changed or removed scene slots release old references before new
-uploads; shared current assets remain cached. Unchanged fields avoid Engine
-setters. Mesh slots follow full managed source identity, not a snapshot index;
+The desktop cache retains CPU identities, not extra GPU clones. The scene owns
+its GPU meshes. A changed asset updates the existing scene object; a first
+divergent edit detaches shared buffers, and later fitting edits can reuse them.
+Removal releases obsolete references; unchanged fields avoid Engine setters.
+Mesh slots follow full managed source identity, not a snapshot index;
 removing an early chunk does not reinsert the surviving suffix.
 Disabling/removing the whole `View3d` releases the retained 3D scene,
 assets, and target, so enabling it again requires uploads. In-flight GPU work
 may outlive released host references. Published and staging CPU snapshots may
 each retain one bounded source set; assets held separately by application code
 are not included in these rendering allowances.
+
+## Materials, lighting and textures
+
+`MeshVisual3d::new(asset, transform, color)` retains the old Opaque, TwoSided,
+Unlit, no-fog defaults. Use `with_surface(asset, transform, surface)` or
+`set_surface(surface)` to select Engine's validated `SurfaceStyle3d`:
+
+- `opaque(color)` ignores vertex/texture alpha and writes depth.
+- `mask(color, cutoff)` discards fragments below the combined-alpha threshold;
+  surviving fragments write opaque color and depth. Equality survives.
+- `blend(color)` tests existing depth, does not write depth, and draws after
+  opaque/masked surfaces. Engine sorts whole objects back-to-front, not
+  triangles within one object or intersecting surfaces.
+
+`surface.with_sidedness(SurfaceSidedness3d::FrontOnly)` keeps projected-CCW
+front faces; the default renders both sides. Looking from inside a one-sided
+box can therefore hide its faces. `MeshVisual3d::set_color` preserves the
+selected alpha mode, mask threshold, lighting, sidedness and fog flag.
+
+`surface.with_lighting(SurfaceLighting3d::Lambert)` requires host-supplied
+model normals. Logic rejects missing normals at construction or a setter,
+without changing the old component. Engine owns inverse-transpose transport,
+nonuniform-scale validation, back-face normal reversal and fragment shading.
+It does not infer face normals from triangle winding. Set `view.set_lighting`
+with Engine's `Lighting3d`: ambient plus at most one directional light.
+Unlit surfaces ignore that illumination.
+
+`view.set_fog(Some(Fog3d::new(color, start, density)?))` sets distance fog, but
+each participating surface must also use `with_fog(true)`. Fog follows
+camera-forward world distance in either projection, not radial distance. It
+changes RGB after illumination, never alpha, depth or logical visibility.
+
+`TextureAsset3d::rgba8(width, height, pixels, max_source_bytes)` accepts owned
+tightly packed top-left-origin sRGB RGBA8 pixels with straight alpha. The
+inclusive limit checks retained Vec capacity, not only its length. Clones
+share an immutable CPU snapshot. Device limits remain Engine's responsibility.
+
+```rust
+use sim_engine::{TextureAddressMode3d, TextureUvTransform3d};
+use sim_logic::{prelude::*, screen::ImageFilter, three_d::{TextureAsset3d, TextureVisual3d}};
+
+fn block_texture() -> LogicResult<TextureVisual3d> {
+    let pixels = vec![255; 4 * 4 * 4];
+    let asset = TextureAsset3d::rgba8(4, 4, pixels, 64)?;
+    Ok(TextureVisual3d::new(asset)
+        .with_mipmaps(true)
+        .with_filter(ImageFilter::Nearest)
+        .with_address_mode(TextureAddressMode3d::Repeat)
+        .with_uv_transform(TextureUvTransform3d::new(
+            Vec2::new(4.0, 2.0), Vec2::ZERO,
+        )?))
+}
+```
+
+Attach with `visual.set_texture(Some(texture))?`. Meshes must already carry
+one UV per vertex; invalid attachment or replacement leaves the old component
+unchanged. Removing a texture does not remove source UVs. Texture tint, surface
+tint, vertex color and sampled texture color multiply in linear color space.
+Engine controls alpha coverage according to the surface mode.
+
+Mipmaps are generated by Engine, not Logic. For atlas assets, isolate a tile
+into its own image before repeating it or generating mipmaps. A packed atlas
+image is not automatically interpreted as isolated tiles. Ordinary mip
+averaging does not preserve Mask coverage and adds no anisotropic filtering.
+
+`asset.with_region_update(region, row_stride, pixels, max_source_bytes)?`
+returns a new complete CPU snapshot. Region coordinates use the existing
+`ImageRegion` texel type; the byte slice has exactly
+`(height - 1) * row_stride + width * 4` bytes, without final-row padding.
+The method allocates a new bounded base-level image and preserves every old
+alias. The limit applies to the new snapshot, not all snapshots the application
+still holds. Only immediate-parent identity and the dirty rectangle are kept;
+there is no unbounded edit-history chain. Install an edited image with
+`texture.with_asset(revised_asset)` and `visual.set_texture`.
+
+`TextureVisual3d::texel_bytes()` reports nominal RGBA8 bytes for the complete
+mip chain. GPU region updates upload mip zero's dirty rectangle but regenerate
+and upload lower levels in full; a small patch is not necessarily a small
+total upload. Revision identity is process-local, never a persistent asset key.
+
+The bridge patches only a direct parent revision with the same mip policy;
+skipped revisions use a full replacement. Engine's final scene budgets and
+finite old/new overlap ceilings apply independently. Removing a material
+currently needs a plain mesh replacement because Engine has no detach setter.
+Changing `View3d`'s background recreates the scene and its GPU resources; do not
+animate the sky by changing that value every frame.
+
+## Desktop measurements and recovery
+
+`DesktopConfig::set_gpu_timing(true)` opts into Engine's bounded asynchronous
+GPU queries. It is off by default. After the loop, `report.gpu_timings()` exposes
+availability, losses, pending queries and the latest completed samples. Samples
+retain source, query ID, logical frame and device generation; completion order
+is not frame order. No waiting or unbounded history is added to the game loop.
+
+`report.three_d_updates()` totals successful scene-owned mesh revisions and
+texture patches, with their upload bytes and new GPU allocations. It excludes
+initial creation, material-only replacements and composition uploads. The
+last preparation is available separately through `last_three_d_updates()`.
+These counters are not whole-frame allocation or universal FPS measurements.
+
+Device recovery restores whole scenes, keeping object IDs, reserved geometry
+capacity, texture revisions and material settings. Targets are recreated for
+the new device. Pending timing associations are cleared, not reassigned to
+new-device frames. The pinned Engine's standalone textured `restore_mesh3d`
+has a known material-preservation regression; the bridge does not use it for
+textured meshes.
 
 ## Geometry, camera, and view switching
 
@@ -147,9 +258,21 @@ derive presentation values from it.
 
 `View3d::new(position, target)` uses positive-y up, a 60-degree vertical field
 of view, and near/far distances of 0.1 and 1000 world units. `set_pose`,
-`set_perspective(fov_radians, near, far)`, and `set_background` validate updates
+`set_perspective(fov_radians, near, far)`,
+`set_orthographic(vertical_span, near, far)`, and `set_background` validate updates
 atomically. Near and far use `WorldLength`; the camera requires a nondegenerate
 look-at direction that is not parallel to its up axis.
+
+The background accepts normalized straight-linear RGBA, including transparent.
+Engine stores premultiplied color in its offscreen target; do not premultiply
+the input color a second time. `orthographic_span()` returns None in perspective
+mode. Both projections derive aspect from the current logical viewport.
+
+`view.set_surface_policy(ThreeDSurfacePolicy::Native)` explicitly selects
+Engine's hardware-filled-surface path for ordinary free-camera games. The
+default `StrictPortable` retains conservative cross-backend clipping and
+orientation proofs. Mathematical display edges retain independent strict
+validation under either policy.
 
 `view.camera(logical_viewport)` derives the perspective aspect ratio from the
 current viewport. This does not automatically move the camera to fit objects.
@@ -178,9 +301,10 @@ order, but actual depth determines surface visibility. Retained Engine object
 order may differ after mesh edits or new insertions. Do not rely on exact
 coplanar surfaces having a useful visual winner.
 
-Desktop composition is: 2D World, then the opaque full-viewport 3D target,
-then ordered screen rectangles and images. The target replaces the World
-pixels beneath it; 2D World objects do not share its depth buffer. Screen
+Desktop composition is: 2D World, then the full-viewport 3D target,
+then ordered screen rectangles and images. Opaque target pixels cover the
+World beneath them; transparent target pixels compose over it. 2D World objects
+do not share its depth buffer. Screen
 overlays retain their existing mixed layer/depth/entity ordering and remain
 above all 3D geometry.
 
@@ -207,6 +331,8 @@ managed source is refreshed even when a different entity has identical geometry.
 | `ThreeDRenderLimits::max_cuboids()` | Visible extracted cuboids and the retained scene-slot count. |
 | `ThreeDRenderLimits::max_meshes()` | Visible custom-mesh instances; zero until explicitly enabled. |
 | `ThreeDRenderLimits::max_mesh_source_bytes()` | Engine topology capacities summed per visible mesh instance, including shared copies. |
+| `ThreeDRenderLimits::max_texture_source_bytes()` | Base-level pixel capacities summed per visible textured mesh, including shared copies. |
+| `ThreeDRenderLimits::max_texture_gpu_bytes()` | Nominal complete-chain RGBA8 texture bytes summed per visible textured mesh. |
 | `ThreeDRenderLimits::max_triangles()` | Source triangles at extraction and total submitted surface triangles at presentation. Each source cuboid starts with twelve. |
 | `ThreeDRenderLimits::max_target_pixels()` | Physical width times height of one color/depth target pair. |
 | `FrameLimits` | Final composition, including the 3D color target and other World/screen sources. |
@@ -218,24 +344,23 @@ them. These values are frozen before the application starts. The AppConfig
 setter preserves other rendering limits; subsequently replacing all
 `RenderLimits` replaces its 3D limits too.
 
-Engine 0.3 can clip filled triangles at all six camera boundaries. This can
-create more triangles than the original cube contained. The adapter keeps the
-existing total triangle limit instead of silently raising it. Engine's current
-clipping budget counts generated triangles, not the combined retained and
-generated total, so Logic reserves room for all source triangles except those
-of the smallest visible object. For cubes alone this is
-`max_triangles - 12 * (visible_cuboids - 1)`; arbitrary mesh sizes use the same
-rule with their actual triangle counts. With no visible objects, generated
-work is disabled. This is conservative when several objects cross camera
-boundaries: a frame can be rejected even when its
-exact total would fit. Leave explicit triangle headroom for moving cameras.
-No separate approximate clipping validator is used.
+Engine's strict path can clip filled triangles at all six camera boundaries,
+creating more triangles than the source contained. The adapter passes the
+combined surface-triangle ceiling directly to dev.4's authoritative preflight;
+it no longer estimates headroom from the smallest object. Leave explicit
+triangle headroom for strict moving cameras. Native submits source triangles
+to hardware clipping and reports CPU clipped/discarded counts as None, not
+zero. Submission counts do not reveal hardware visibility. No duplicate
+clipping validator lives in Logic.
 
 The retained Engine scene receives the sum of cuboid and mesh ceilings and
 Engine's finite default scene-storage and mesh-byte ceilings. Custom uploads
 are bounded by remaining aggregate scene CPU/GPU mesh capacity before upload;
-Engine's separate finite staging limit also applies. Textured scene resources
-are disabled in this opaque adapter. Engine's default generated
+Engine's separate finite staging limit also applies. Enable textures with
+`limits.with_texture_limits(base_source_bytes, full_mip_texel_bytes)`; both
+defaults are zero. Hidden/disabled meshes do not consume these allowances.
+Engine's separate CPU mip-storage and transient-update limits still apply.
+Engine's default generated
 vertex, triangle, and upload-byte ceilings remain upper bounds. Author limits
 do not bypass these Engine or device limits. Zero cuboid and mesh limits still
 permit only a background, despite Engine requiring a nonzero internal scene
@@ -303,12 +428,12 @@ invalidates its mesh, scene, and target cache. The next enabled 3D presentation
 recreates them from the built-in topology and current CPU snapshot. Recovery
 does not require replacing the World or replaying gameplay/audio events.
 
-Unlike Engine 0.2, the pinned Engine 0.3 path clips crossing filled triangles
-against all six camera planes. Geometry wholly outside the view is a defined
-clipped outcome. Numerically ambiguous grazing or nearly edge-on cases can
-still return an object-attributed portability error; crossing a plane alone
-is no longer an automatic rejection. Explicit display edges retain their
-separate validated clipping path.
+In StrictPortable mode, numerically ambiguous grazing or nearly edge-on cases
+can still return an object-attributed portability error. Native avoids that
+strict filled-surface orientation requirement, but still rejects unsupported
+shader arithmetic. Neither mode disables Engine's independent edge proofs.
+Object-local failures now include the original triangle or vertex index and
+the detailed reason, when applicable.
 
 Check resized, very tall, and very wide viewports, and allow triangle headroom
 for clipped surfaces. An oblique camera can avoid nearly edge-on filled faces.
@@ -317,6 +442,9 @@ checks; their `inside_view()` results are useful but do not prove Engine's
 stricter portable-shader validation. Verify the intended desktop camera and
 viewport range with the actual renderer as well.
 
+The [dev.4 CPU tests](../../tests/dev4_visuals.rs) cover surface defaults,
+atomic attribute requirements, immutable strided texture revisions, mip byte
+counts and exact extraction limits. They do not claim rendered pixel evidence.
 The [mesh tests](../../tests/mesh_three_d.rs) cover immutable sharing, geometry
 rejection, capacity-aware budgets, revisions and World replacement.
 The [headless acceptance tests](../../tests/three_d.rs) cover visibility, shared
@@ -324,5 +452,5 @@ identity across view switches, current-value transforms, atomic failure, and
 World replacement. The [migration unit tests](../../src/platform/desktop/three_d/migration_tests.rs)
 cover budget arithmetic, source refresh, scene-wide errors, and target-cache
 invalidation policy without a GPU. These tests do not establish rendered
-clipping output or a performance improvement; the clipping description above
-is the Engine 0.3 API contract, not a new Logic GPU measurement.
+clipping output or a performance improvement. Native/GPU integration results
+must be measured independently on the exact pinned candidate.

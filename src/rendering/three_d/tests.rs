@@ -68,7 +68,11 @@ fn view_setters_are_atomic_and_aspect_follows_viewport() {
     let mut camera_view = view();
     let original = camera_view;
     assert!(camera_view.set_pose(Vec3::ZERO, Vec3::ZERO).is_err());
-    assert!(camera_view.set_background(Color::TRANSPARENT).is_err());
+    assert!(
+        camera_view
+            .set_background(Color::rgba(1.1, 0.0, 0.0, 1.0))
+            .is_err()
+    );
     assert!(
         camera_view
             .set_perspective(

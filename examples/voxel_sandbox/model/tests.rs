@@ -10,6 +10,41 @@ fn flat_region() -> Region {
     region
 }
 
+#[test]
+fn masked_leaves_do_not_hide_geometry_visible_through_their_holes() {
+    let mut region = Region::from_blocks(vec![Block::Air; terrain::CELL_COUNT]);
+    region.set([2, 2, 2], Block::Stone);
+    region.set([3, 2, 2], Block::Leaves);
+    let meshes = region.chunk_meshes(0).unwrap();
+    let triangles = |block| {
+        meshes
+            .iter()
+            .filter(|part| part.block == block)
+            .map(|part| part.mesh.triangle_count())
+            .sum::<usize>()
+    };
+    assert_eq!(
+        triangles(Block::Stone),
+        12,
+        "stone behind a leaf mask stays visible"
+    );
+    assert_eq!(
+        triangles(Block::Leaves),
+        10,
+        "opaque stone hides the neighboring leaf face"
+    );
+    region.set([2, 2, 2], Block::Leaves);
+    assert_eq!(
+        region
+            .chunk_meshes(0)
+            .unwrap()
+            .iter()
+            .map(|part| part.mesh.triangle_count())
+            .sum::<usize>(),
+        24
+    );
+}
+
 fn flat_game() -> SaveGame {
     let region = flat_region();
     let player = Player::at([12.5, 1.02, 12.5]);
@@ -100,6 +135,65 @@ fn cross_chunk_neighbors_hide_the_shared_face() {
 }
 
 #[test]
+fn all_six_voxel_faces_have_outward_winding_matching_normals_and_complete_attributes() {
+    let mut region = Region::from_blocks(vec![Block::Air; terrain::CELL_COUNT]);
+    region.set([2, 2, 2], Block::Stone);
+    let mut directions = Vec::new();
+    let center = [2.5_f32; 3];
+    for part in region.chunk_meshes(0).unwrap() {
+        let mesh = &part.mesh;
+        assert_eq!(mesh.normals().len(), mesh.vertices().len());
+        assert_eq!(mesh.vertex_colors().len(), mesh.vertices().len());
+        assert_eq!(mesh.texture_coordinates().len(), mesh.vertices().len());
+        assert!(
+            mesh.vertex_colors()
+                .iter()
+                .all(|color| color.is_normalized())
+        );
+        for uv in mesh.texture_coordinates() {
+            assert!((0.0..=1.0).contains(&uv.u()));
+            assert!((0.0..=1.0).contains(&uv.v()));
+        }
+        for indices in mesh.triangle_indices().chunks_exact(3) {
+            let points: Vec<_> = indices
+                .iter()
+                .map(|index| mesh.vertices()[*index as usize])
+                .collect();
+            let a = points[0];
+            let b = points[1];
+            let c = points[2];
+            let u = [b.x() - a.x(), b.y() - a.y(), b.z() - a.z()];
+            let v = [c.x() - a.x(), c.y() - a.y(), c.z() - a.z()];
+            let cross = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let normal = mesh.normals()[indices[0] as usize];
+            assert_eq!(cross, [normal.x(), normal.y(), normal.z()]);
+            assert!(
+                indices
+                    .iter()
+                    .all(|index| mesh.normals()[*index as usize] == normal)
+            );
+            let outward = [a.x() - center[0], a.y() - center[1], a.z() - center[2]];
+            assert!(
+                cross
+                    .iter()
+                    .zip(outward)
+                    .map(|(normal, offset)| normal * offset)
+                    .sum::<f32>()
+                    > 0.0
+            );
+            if !directions.contains(&cross) {
+                directions.push(cross);
+            }
+        }
+    }
+    assert_eq!(directions.len(), 6);
+}
+
+#[test]
 fn generated_chunk_meshes_have_bounded_valid_topology() {
     let game = SaveGame::new(42);
     for id in RegionId::ALL {
@@ -116,6 +210,12 @@ fn generated_chunk_meshes_have_bounded_valid_topology() {
             for part in parts {
                 assert!(part.block.solid());
                 assert!(part.shade <= 2);
+                assert_eq!(part.mesh.normals().len(), part.mesh.vertices().len());
+                assert_eq!(part.mesh.vertex_colors().len(), part.mesh.vertices().len());
+                assert_eq!(
+                    part.mesh.texture_coordinates().len(),
+                    part.mesh.vertices().len()
+                );
                 for vertex in part.mesh.vertices() {
                     assert!(vertex.x() >= 0.0 && vertex.x() <= WIDTH as f32);
                     assert!(vertex.y() >= 0.0 && vertex.y() <= HEIGHT as f32);

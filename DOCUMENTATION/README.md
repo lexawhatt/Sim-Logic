@@ -58,7 +58,9 @@ World factories are synchronous and take no runtime payload. Behavior sugar,
 an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
 pointer buttons have no global focus or OS capture, audio is not a World-owned voice service,
-and 3D accepts host-built opaque meshes but supplies no model-file importer.
+and 3D accepts host-built textured meshes but supplies no model-file importer.
+The current Engine dependency is an exact `0.4.0-dev.4` Git revision, not a
+registry release. Its new capabilities are under consumer integration testing.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been
 checked on Linux/Vulkan, not every platform. For the product overview and

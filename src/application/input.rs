@@ -153,9 +153,19 @@ pub enum PhysicalKeyCode {
     F8,
     /// The physical F9 function key.
     F9,
+    /// The physical L key.
+    KeyL,
+    /// The physical F key.
+    KeyF,
+    /// The physical M key.
+    KeyM,
+    /// The physical T key.
+    KeyT,
+    /// The physical V key.
+    KeyV,
 }
 
-pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 25] = [
+pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 30] = [
     PhysicalKeyCode::KeyW,
     PhysicalKeyCode::KeyA,
     PhysicalKeyCode::KeyS,
@@ -181,6 +191,11 @@ pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 25] = [
     PhysicalKeyCode::F6,
     PhysicalKeyCode::F8,
     PhysicalKeyCode::F9,
+    PhysicalKeyCode::KeyL,
+    PhysicalKeyCode::KeyF,
+    PhysicalKeyCode::KeyM,
+    PhysicalKeyCode::KeyT,
+    PhysicalKeyCode::KeyV,
 ];
 
 pub(crate) const SUPPORTED_PHYSICAL_KEY_COUNT: usize = ALL_PHYSICAL_KEYS.len();
@@ -1213,6 +1228,11 @@ pub(crate) const fn physical_key_index(key: PhysicalKeyCode) -> usize {
         PhysicalKeyCode::F6 => 22,
         PhysicalKeyCode::F8 => 23,
         PhysicalKeyCode::F9 => 24,
+        PhysicalKeyCode::KeyL => 25,
+        PhysicalKeyCode::KeyF => 26,
+        PhysicalKeyCode::KeyM => 27,
+        PhysicalKeyCode::KeyT => 28,
+        PhysicalKeyCode::KeyV => 29,
     }
 }
 
@@ -1295,7 +1315,7 @@ mod tests {
 
     #[test]
     fn physical_key_catalog_is_unique_and_round_trips_every_index() {
-        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 25);
+        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 30);
         let mut unique = HashSet::new();
 
         for (index, key) in ALL_PHYSICAL_KEYS.into_iter().enumerate() {

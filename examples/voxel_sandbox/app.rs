@@ -1,6 +1,7 @@
 //! One input owner routes UI and game actions; fixed ticks consume accepted motion.
 
 use super::{
+    materials::{Palette, Settings},
     model::{Block, Movement, RegionId, SaveGame},
     projection,
     scene::{Local, Phase, Recipe, SelectionEdge},
@@ -28,6 +29,11 @@ pub enum Action {
     Save,
     Load,
     Exit,
+    Lighting,
+    Fog,
+    Mipmaps,
+    TexturePatch,
+    Projection,
     Slot(usize),
 }
 
@@ -46,7 +52,7 @@ pub struct Session {
     pub pending_load: Option<PendingLoad>,
 }
 
-struct Routes([WorldFactoryId; 2]);
+pub(crate) struct Routes(pub [WorldFactoryId; 2]);
 
 #[derive(Clone, Copy)]
 struct Edited;
@@ -135,6 +141,7 @@ fn route(
     time: FrameTime,
     routes: AppRes<Routes>,
     mut local: ResMut<Local>,
+    mut settings: ResMut<Settings>,
     mut session: AppResMut<Session>,
     mut commands: Commands,
     mut edited: EventWriter<Edited>,
@@ -190,6 +197,10 @@ fn route(
             continue;
         }
         if !ready {
+            continue;
+        }
+        if let Some(notice) = settings.handle_action(edge.action()) {
+            session.notice = notice.into();
             continue;
         }
         if edge.action() == Action::Jump && !paused {
@@ -284,7 +295,9 @@ pub fn build_application(
     // terrain can expose 6 faces for every solid cell; source/upload work is
     // bounded independently of the final screen composition.
     config.set_three_d_render_limits(
-        ThreeDRenderLimits::new(12, 120_000, 8_388_608).with_mesh_limits(270, 32 * 1024 * 1024),
+        ThreeDRenderLimits::new(12, 120_000, 8_388_608)
+            .with_mesh_limits(274, 32 * 1024 * 1024)
+            .with_texture_limits(2 * 1024 * 1024, 4 * 1024 * 1024),
     );
     let mut app = Application::new(config)?;
     app.approve_components::<(
@@ -293,11 +306,12 @@ pub fn build_application(
         SelectionEdge,
         projection::ChunkPart,
         projection::ChunkStamp,
+        super::showcase::Showcase,
     )>()?;
     app.register_app_resource(Session {
         game: SaveGame::new(0x51_4d_10),
         epoch: 1,
-        notice: "Build something here. N takes you to the other region.".into(),
+        notice: "L light / F fog / M mips / T paint board / V projection. Study panels are non-colliding.".into(),
         edits: 0,
         ticks: 0,
         save_path,
@@ -308,8 +322,10 @@ pub fn build_application(
     let tiny = app.register_font(view::FONT.to_vec(), TextSettings::new(9.0)?)?;
     app.register_app_resource(view::Fonts([font.clone(), small, tiny]))?;
     let [meadow_id, canyon_id] = RegionId::ALL;
-    let meadow = Recipe::new(meadow_id, &font)?;
-    let canyon = Recipe::new(canyon_id, &font)?;
+    let palette = Palette::new()?;
+    let meadow = Recipe::new(meadow_id, &font, &palette)?;
+    let canyon = Recipe::new(canyon_id, &font, &palette)?;
+    app.register_app_resource(palette)?;
     let initial = app.register_world("voxel-meadow", move |world| meadow.spawn(world))?;
     let alternate = app.register_world("voxel-canyon", move |world| canyon.spawn(world))?;
     app.register_app_resource(Routes([initial, alternate]))?;
@@ -328,6 +344,11 @@ pub fn build_application(
         (PhysicalKeyCode::F5, Action::Save),
         (PhysicalKeyCode::F9, Action::Load),
         (PhysicalKeyCode::Escape, Action::Exit),
+        (PhysicalKeyCode::KeyL, Action::Lighting),
+        (PhysicalKeyCode::KeyF, Action::Fog),
+        (PhysicalKeyCode::KeyM, Action::Mipmaps),
+        (PhysicalKeyCode::KeyT, Action::TexturePatch),
+        (PhysicalKeyCode::KeyV, Action::Projection),
         (PhysicalKeyCode::Digit1, Action::Slot(0)),
         (PhysicalKeyCode::Digit2, Action::Slot(1)),
         (PhysicalKeyCode::Digit3, Action::Slot(2)),
@@ -343,6 +364,8 @@ pub fn build_application(
     app.add_fallible_frame_system(route);
     app.add_frame_system(count_edits);
     app.add_fallible_frame_system(projection::project);
+    app.add_fallible_frame_system(super::materials::apply);
+    app.add_fallible_frame_system(super::showcase::update);
     app.add_fallible_frame_system(super::presentation::present);
     Ok((app, initial))
 }

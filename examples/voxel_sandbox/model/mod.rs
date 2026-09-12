@@ -40,7 +40,7 @@ impl RegionId {
     }
 }
 
-/// Opaque block materials. Air has no mesh or inventory slot.
+/// Collidable blocks; leaf surfaces use an alpha mask. Air has no mesh or slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Block {

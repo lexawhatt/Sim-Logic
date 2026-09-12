@@ -79,7 +79,7 @@ impl SaveGame {
         Self::decode(&bytes)
     }
 
-    pub(super) fn encode(&self) -> Result<Vec<u8>, SaveError> {
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, SaveError> {
         let mut players = self.parked_players;
         players[self.active.index()] = self.player;
         validate(&self.regions, &players, &self.inventory)?;
@@ -107,7 +107,7 @@ impl SaveGame {
         Ok(bytes)
     }
 
-    pub(super) fn decode(bytes: &[u8]) -> Result<Self, SaveError> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, SaveError> {
         if bytes.len() != SAVE_BYTES {
             return Err(SaveError::Invalid("unexpected byte count"));
         }

@@ -1,6 +1,6 @@
 use std::{collections::TryReserveError, error::Error, fmt};
 
-use sim_engine::{FontError, LogicalScreenPosition};
+use sim_engine::{FontError, LogicalScreenPosition, ShapedLineError};
 
 use crate::screen::ScreenVisualError;
 
@@ -14,6 +14,8 @@ use crate::screen::ScreenVisualError;
 pub enum TextError {
     /// Engine rejected trusted font bytes, single-line input, or font geometry.
     Font(FontError),
+    /// Prepared shaping state belongs to a different font/style or exceeds limits.
+    Prepared(ShapedLineError),
     /// The application has reached its fixed registration-count limit.
     FontLimitExceeded {
         /// Maximum distinct font registrations.
@@ -57,6 +59,7 @@ impl fmt::Display for TextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Font(error) => write!(formatter, "text font: {error}"),
+            Self::Prepared(error) => write!(formatter, "text preparation: {error}"),
             Self::FontLimitExceeded { limit } => {
                 write!(
                     formatter,
@@ -96,6 +99,7 @@ impl Error for TextError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Font(error) => Some(error),
+            Self::Prepared(error) => Some(error),
             Self::Screen(error) => Some(error),
             Self::AllocationFailed { source } => Some(source),
             _ => None,
@@ -106,6 +110,12 @@ impl Error for TextError {
 impl From<FontError> for TextError {
     fn from(error: FontError) -> Self {
         Self::Font(error)
+    }
+}
+
+impl From<ShapedLineError> for TextError {
+    fn from(error: ShapedLineError) -> Self {
+        Self::Prepared(error)
     }
 }
 

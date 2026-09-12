@@ -12,11 +12,12 @@ default = ["desktop"]
 desktop = ["sim-engine/wgpu", "dep:winit", "dep:pollster"]
 audio = ["dep:rodio"]
 easter-eggs = ["dep:png"]
-text = ["sim-engine/text"]
+fonts = ["sim-engine/fonts"]
+text = ["fonts", "sim-engine/text"]
 
 [dependencies]
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std", "debug"] }
-sim-engine = { version = "=0.3.0", default-features = false }
+sim-engine = { git = "https://github.com/lexawhatt/Sim-Engine.git", rev = "1afbc7c5a71a7aabafe41d16ac2502bef7424e2f", default-features = false }
 winit = { version = "=0.30.12", optional = true }
 pollster = { version = "=1.0.1", optional = true }
 rodio = { version = "=0.22.2", default-features = false, features = ["playback"], optional = true }

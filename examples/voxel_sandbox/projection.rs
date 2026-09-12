@@ -2,14 +2,19 @@
 
 use super::{
     app::Session,
-    model::CHUNK_COUNT,
+    materials::{self, Palette, Settings},
+    model::{Block, CHUNK_COUNT},
     scene::{Local, Phase},
 };
 use sim_logic::prelude::*;
 
-#[derive(Component)]
+/// Stable rendering part identity within one World. A new source mesh is a
+/// revision of this part, not a new entity, while this material/shade survives.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
 pub struct ChunkPart {
     pub chunk: usize,
+    pub block: Block,
+    pub shade: u8,
 }
 
 /// A stamp becomes visible only with its chunk's atomic structural batch.
@@ -23,6 +28,8 @@ pub struct ChunkStamp {
 
 pub fn project(
     mut session: AppResMut<Session>,
+    palette: AppRes<Palette>,
+    settings: Res<Settings>,
     mut local: ResMut<Local>,
     parts: Query<(LogicEntityRef, &ChunkPart)>,
     stamps: Query<(LogicEntityRef, &ChunkStamp)>,
@@ -64,11 +71,14 @@ pub fn project(
         }
         let mut visuals = Vec::new();
         for part in region.chunk_meshes(chunk)? {
-            visuals.push(MeshVisual3d::new(
-                MeshAsset3d::new(part.mesh)?,
-                sim_engine::Transform3d::IDENTITY,
-                part.block.color(part.shade),
-            )?);
+            visuals.push((
+                ChunkPart {
+                    chunk,
+                    block: part.block,
+                    shade: part.shade,
+                },
+                prepare_visual(part.mesh, part.block, part.shade, &palette, &settings)?,
+            ));
         }
         replacements.push((chunk, revision, visuals));
     }
@@ -76,7 +86,14 @@ pub fn project(
     for (chunk, revision, visuals) in &replacements {
         for (entity, part) in &parts {
             if part.chunk == *chunk {
-                commands.despawn(entity.handle())?;
+                if let Some((_, visual)) = visuals.iter().find(|(key, _)| key == part) {
+                    // This insert shares the same atomic barrier as the stamp.
+                    // An Engine dynamic revision can retain the scene object ID
+                    // only when the application retains its managed source ID.
+                    commands.insert(entity.handle(), visual.clone())?;
+                } else {
+                    commands.despawn(entity.handle())?;
+                }
             }
         }
         for (entity, stamp) in &stamps {
@@ -84,8 +101,10 @@ pub fn project(
                 commands.despawn(entity.handle())?;
             }
         }
-        for visual in visuals {
-            commands.spawn((ChunkPart { chunk: *chunk }, visual.clone()))?;
+        for (key, visual) in visuals {
+            if !parts.iter().any(|(_, part)| part == key) {
+                commands.spawn((*key, visual.clone()))?;
+            }
         }
         commands.spawn(ChunkStamp {
             chunk: *chunk,
@@ -103,4 +122,22 @@ pub fn project(
         local.phase = Phase::Ready;
     }
     Ok(())
+}
+
+/// Presentation-only construction point; terrain identity and Commands
+/// publication do not depend on which Engine material this example selects.
+fn prepare_visual(
+    mesh: sim_engine::Mesh3d,
+    block: Block,
+    shade: u8,
+    palette: &Palette,
+    settings: &Settings,
+) -> LogicResult<MeshVisual3d> {
+    let mut visual = MeshVisual3d::with_surface(
+        MeshAsset3d::new(mesh)?,
+        sim_engine::Transform3d::IDENTITY,
+        materials::surface(block, shade, settings)?,
+    )?;
+    visual.set_texture(Some(palette.texture(block, settings.mipmaps)?))?;
+    Ok(visual)
 }

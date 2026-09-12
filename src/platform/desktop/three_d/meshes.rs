@@ -1,40 +1,35 @@
-//! Current-snapshot mesh residency; no cache of retired chunk revisions.
+//! Scene-owned GPU revisions, with only immutable CPU identities in host slots.
 
 use super::*;
-use crate::three_d::{MeshAsset3d, ResolvedMesh3d};
-use sim_engine::Mesh3dUploadBudget;
+use crate::three_d::{MeshAsset3d, ResolvedMesh3d, TextureVisual3d};
+use sim_engine::{DynamicMesh3dBudget, Mesh3dUploadBudget, SurfaceLighting3d};
 
 pub(super) struct CustomMeshes {
-    assets: Vec<CachedAsset>,
     slots: Vec<MeshSlot>,
+    pub(super) updates: DesktopThreeDUpdates,
 }
 
-struct CachedAsset {
-    source: MeshAsset3d,
-    retained: RetainedMesh3d,
-    used: bool,
-}
-
-struct MeshSlot {
-    asset_key: usize,
-    scene: SceneSlot,
+pub(super) struct MeshSlot {
+    pub(super) asset: MeshAsset3d,
+    pub(super) texture: Option<TextureVisual3d>,
+    pub(super) scene: SceneSlot,
 }
 
 impl CustomMeshes {
     pub(super) const fn new() -> Self {
         Self {
-            assets: Vec::new(),
             slots: Vec::new(),
+            updates: DesktopThreeDUpdates::empty(),
         }
     }
 
     pub(super) fn clear(&mut self) {
-        self.assets.clear();
         self.slots.clear();
+        self.updates = DesktopThreeDUpdates::empty();
     }
 
     pub(super) fn clear_slots(&mut self) {
-        self.slots.clear();
+        self.clear();
     }
 
     pub(super) fn object_sources(
@@ -47,18 +42,12 @@ impl CustomMeshes {
 
     pub(super) fn prepare(
         &mut self,
-        renderer: &WgpuRenderer,
+        renderer: &mut WgpuRenderer,
         scene: &mut Scene3d,
         records: &[ResolvedMesh3d],
         limits: ThreeDRenderLimits,
-        cube: &RetainedMesh3d,
     ) -> Result<(), DesktopThreeDError> {
-        // Retire obsolete scene references before admitting any new upload.
-        // Slots keep no mesh handles themselves. Engine may retain submitted
-        // buffers until GPU completion, but host caches cannot accumulate edits.
-        // The record index is not identity: removing an early chunk must not
-        // reinsert every later object. Match complete managed sources; the
-        // sorted raw entity bits are only a lookup accelerator, never authority.
+        self.updates = DesktopThreeDUpdates::empty();
         for index in (0..self.slots.len()).rev() {
             let slot = &self.slots[index];
             let source = slot.scene.applied.source;
@@ -67,63 +56,17 @@ impl CustomMeshes {
                     record.source().stable_bits()
                 })
                 .ok()
-                .map(|index| {
-                    (
-                        records[index].source(),
-                        records[index].visual().asset().key(),
-                    )
-                });
-            if !same_source_asset(source, slot.asset_key, incoming) {
+                .map(|index| records[index].source());
+            if !same_source(source, incoming) {
                 scene
                     .remove(slot.scene.id)
                     .map_err(DesktopThreeDError::Scene)?;
                 self.slots.remove(index);
             }
         }
-        for asset in &mut self.assets {
-            asset.used = false;
-        }
-        for record in records {
-            if let Ok(index) = self.asset_index(record.visual().asset().key()) {
-                self.assets[index].used = true;
-            }
-        }
-        self.assets.retain(|asset| asset.used);
 
         for record in records {
             let source = record.source();
-            let key = record.visual().asset().key();
-            let asset_index = match self.asset_index(key) {
-                Ok(index) => index,
-                Err(index) => {
-                    reserve_one(&mut self.assets)?;
-                    let cpu = self
-                        .assets
-                        .iter()
-                        .fold(cube.recovery_memory_bytes(), |sum, asset| {
-                            sum.saturating_add(asset.retained.recovery_memory_bytes())
-                        });
-                    let gpu = self
-                        .assets
-                        .iter()
-                        .fold(cube.gpu_allocation_bytes(), |sum, asset| {
-                            sum.saturating_add(asset.retained.gpu_allocation_bytes())
-                        });
-                    let budget = remaining_upload_budget(limits, cpu, gpu)?;
-                    let retained = renderer
-                        .create_mesh3d_with_budget(record.visual().asset().mesh().clone(), budget)
-                        .map_err(DesktopThreeDError::Resource)?;
-                    self.assets.insert(
-                        index,
-                        CachedAsset {
-                            source: record.visual().asset().clone(),
-                            retained,
-                            used: true,
-                        },
-                    );
-                    index
-                }
-            };
             let desired = AppliedState {
                 source,
                 transform: record.transform(),
@@ -138,23 +81,20 @@ impl CustomMeshes {
                 .binary_search_by_key(&source.stable_bits(), |slot| {
                     slot.scene.applied.source.stable_bits()
                 }) {
-                Ok(index) => self.slots[index]
-                    .scene
-                    .update(scene, desired)
-                    .map_err(|error| DesktopThreeDError::Object { source, error })?,
+                Ok(index) => self.update(index, renderer, scene, record, desired, limits)?,
                 Err(index) => {
                     reserve_one(&mut self.slots)?;
+                    let mesh = self.initial_mesh(renderer, scene, record, limits)?;
                     let id = scene
-                        .try_push(
-                            &self.assets[asset_index].retained,
-                            desired.transform,
-                            desired.style,
-                        )
+                        .try_push(&mesh, desired.transform, desired.style)
                         .map_err(|error| DesktopThreeDError::Object { source, error })?;
+                    // No host GPU clone survives insertion. Unique bundles are
+                    // scene-owned; other objects remain explicit immutable aliases.
                     self.slots.insert(
                         index,
                         MeshSlot {
-                            asset_key: key,
+                            asset: record.visual().asset().clone(),
+                            texture: record.visual().texture().cloned(),
                             scene: SceneSlot {
                                 id,
                                 applied: desired,
@@ -167,33 +107,182 @@ impl CustomMeshes {
         Ok(())
     }
 
-    fn asset_index(&self, key: usize) -> Result<usize, usize> {
-        self.assets
-            .binary_search_by_key(&key, |asset| asset.source.key())
+    fn initial_mesh(
+        &self,
+        renderer: &WgpuRenderer,
+        scene: &Scene3d,
+        record: &ResolvedMesh3d,
+        limits: ThreeDRenderLimits,
+    ) -> Result<RetainedMesh3d, DesktopThreeDError> {
+        let incoming = record.visual();
+        let shared = self.slots.iter().find(|slot| {
+            slot.asset.shares_storage(incoming.asset())
+                && (incoming.texture().is_some() || slot.texture.is_none())
+        });
+        let mesh = if let Some(slot) = shared {
+            scene
+                .instance(slot.scene.id)
+                .map_err(DesktopThreeDError::Scene)?
+                .mesh()
+                .clone()
+        } else {
+            renderer
+                .create_mesh3d_with_budget(
+                    incoming.asset().mesh().clone(),
+                    upload_budget(limits, scene, false)?,
+                )
+                .map_err(DesktopThreeDError::Resource)?
+        };
+        if let Some(texture) = incoming.texture() {
+            textures::bind(
+                renderer,
+                scene,
+                &self.slots,
+                &mesh,
+                record.source(),
+                texture,
+            )
+        } else {
+            Ok(mesh)
+        }
+    }
+
+    fn update(
+        &mut self,
+        index: usize,
+        renderer: &mut WgpuRenderer,
+        scene: &mut Scene3d,
+        record: &ResolvedMesh3d,
+        desired: AppliedState,
+        limits: ThreeDRenderLimits,
+    ) -> Result<(), DesktopThreeDError> {
+        let source = record.source();
+        let id = self.slots[index].scene.id;
+        let incoming = record.visual();
+        let changing_mesh = self.slots[index].asset != *incoming.asset();
+        let removing_texture = self.slots[index].texture.is_some() && incoming.texture().is_none();
+        if changing_mesh || removing_texture {
+            // Old Lambert must not reject normal removal before the final Unlit
+            // style can be installed. Record each successful intermediate setter.
+            let applied = &mut self.slots[index].scene.applied;
+            if incoming.asset().mesh().normals().is_empty()
+                && let Some(surface) = applied.style.surface_style()
+                && surface.lighting() == SurfaceLighting3d::Lambert
+            {
+                let unlit = MeshStyle3d::surface(surface.with_lighting(SurfaceLighting3d::Unlit));
+                scene
+                    .set_style(id, unlit)
+                    .map_err(|error| DesktopThreeDError::Object { source, error })?;
+                applied.style = unlit;
+            }
+            if removing_texture {
+                // Engine has no material-removal operation. Plain replacement
+                // remains explicitly bounded and preserves the scene object ID.
+                let mesh = renderer
+                    .create_mesh3d_with_budget(
+                        incoming.asset().mesh().clone(),
+                        upload_budget(limits, scene, true)?,
+                    )
+                    .map_err(DesktopThreeDError::Resource)?;
+                scene
+                    .set_mesh(id, &mesh)
+                    .map_err(|error| DesktopThreeDError::Object { source, error })?;
+                self.slots[index].texture = None;
+            } else {
+                let budget = dynamic_budget(limits, scene, id)?;
+                let report = renderer
+                    .update_scene3d_mesh(scene, id, incoming.asset().mesh().clone(), budget)
+                    .map_err(|error| DesktopThreeDError::DynamicMesh { source, error })?;
+                self.updates.mesh_updates = self.updates.mesh_updates.saturating_add(1);
+                self.updates.mesh_upload_bytes = self
+                    .updates
+                    .mesh_upload_bytes
+                    .saturating_add(report.uploaded_bytes());
+                self.updates.mesh_gpu_allocations = self
+                    .updates
+                    .mesh_gpu_allocations
+                    .saturating_add(report.gpu_allocation_count());
+            }
+            self.slots[index].asset = incoming.asset().clone();
+        }
+        if let Some(texture) = incoming.texture() {
+            textures::update(
+                renderer,
+                scene,
+                &mut self.slots,
+                index,
+                texture,
+                &mut self.updates,
+            )?;
+        }
+        self.slots[index]
+            .scene
+            .update(scene, desired)
+            .map_err(|error| DesktopThreeDError::Object { source, error })
     }
 }
 
-fn same_source_asset<Id: Eq>(source: Id, asset: usize, incoming: Option<(Id, usize)>) -> bool {
-    incoming.is_some_and(|(incoming_source, incoming_asset)| {
-        source == incoming_source && asset == incoming_asset
-    })
+fn same_source<Id: Eq>(source: Id, incoming: Option<Id>) -> bool {
+    incoming.is_some_and(|incoming| source == incoming)
 }
 
-fn remaining_upload_budget(
+fn upload_budget(
     limits: ThreeDRenderLimits,
-    retained_cpu: usize,
-    retained_gpu: usize,
+    scene: &Scene3d,
+    replacing: bool,
 ) -> Result<Mesh3dUploadBudget, DesktopThreeDError> {
-    let scene = engine_scene_budget(limits)?;
+    let budget = scene.budget();
+    let statistics = scene.statistics();
+    let overlap = usize::from(replacing) + 1;
     Mesh3dUploadBudget::new(
-        scene
+        budget
             .max_mesh_cpu_bytes()
-            .saturating_sub(retained_cpu)
+            .saturating_mul(overlap)
+            .saturating_sub(statistics.mesh_cpu_bytes())
             .min(limits.max_mesh_source_bytes()),
-        scene.max_mesh_gpu_bytes().saturating_sub(retained_gpu),
+        budget
+            .max_mesh_gpu_bytes()
+            .saturating_mul(overlap)
+            .saturating_sub(statistics.mesh_gpu_bytes())
+            .min(budget.max_mesh_gpu_bytes()),
         Mesh3dUploadBudget::default().max_staging_bytes(),
     )
     .map_err(DesktopThreeDError::Resource)
+}
+
+fn dynamic_budget(
+    limits: ThreeDRenderLimits,
+    scene: &Scene3d,
+    id: Object3dId,
+) -> Result<DynamicMesh3dBudget, DesktopThreeDError> {
+    let upload = upload_budget(limits, scene, true)?;
+    let old = scene
+        .instance(id)
+        .map_err(DesktopThreeDError::Scene)?
+        .mesh();
+    let statistics = scene.statistics();
+    let budget = scene.budget();
+    // Aggregate old/new overlap is at most twice the scene ceiling, including
+    // unrelated residency. Engine separately enforces exact final deduplication.
+    Ok(DynamicMesh3dBudget::new(upload).with_peak_limits(
+        aggregate_peak_allowance(
+            budget.max_mesh_cpu_bytes(),
+            statistics.mesh_cpu_bytes(),
+            old.recovery_memory_bytes(),
+        ),
+        aggregate_peak_allowance(
+            budget.max_mesh_gpu_bytes(),
+            statistics.mesh_gpu_bytes(),
+            old.gpu_allocation_bytes(),
+        ),
+        upload.max_staging_bytes().saturating_mul(2),
+    ))
+}
+
+pub(super) fn aggregate_peak_allowance(limit: usize, current: usize, outgoing: usize) -> usize {
+    limit
+        .saturating_mul(2)
+        .saturating_sub(current.saturating_sub(outgoing))
 }
 
 fn reserve_one<T>(values: &mut Vec<T>) -> Result<(), DesktopThreeDError> {
@@ -212,55 +301,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unchanged_assets_keep_slots_but_replacement_and_disappearance_retire() {
-        assert!(same_source_asset((1, 7), 9, Some(((1, 7), 9))));
-        assert!(!same_source_asset((1, 7), 9, None));
-        assert!(!same_source_asset((1, 7), 9, Some(((1, 7), 10))));
-        assert!(!same_source_asset((1, 7), 9, Some(((2, 7), 9))));
+    fn retirement_uses_full_entity_generation_not_asset_or_record_position() {
+        assert!(same_source((1, 7), Some((1, 7))));
+        assert!(!same_source((1, 7), None));
+        assert!(!same_source((1, 7), Some((2, 7))));
     }
 
     #[test]
-    fn removing_first_chunk_preserves_every_surviving_source_slot() {
-        let current = [(1_u32, 11), (2, 22), (3, 33), (4, 44)];
-        let incoming = [(2_u32, 22), (3, 33), (4, 44)];
-        let retired: Vec<_> = current
-            .iter()
-            .copied()
-            .filter(|(source, asset)| {
-                let found = incoming
-                    .binary_search_by_key(source, |(source, _)| *source)
-                    .ok()
-                    .map(|index| incoming[index]);
-                !same_source_asset(*source, *asset, found)
-            })
-            .collect();
-        assert_eq!(retired, [(1, 11)]);
+    fn overlap_allowance_charges_unrelated_residency() {
+        assert_eq!(aggregate_peak_allowance(100, 90, 20), 130);
+        assert_eq!(aggregate_peak_allowance(100, 100, 1), 101);
+        assert_eq!(aggregate_peak_allowance(100, 300, 20), 0);
     }
 
     #[test]
-    fn upload_allowance_respects_remaining_aggregate_bytes_not_only_incoming_size() {
-        let scene = Scene3dBudget::default();
+    fn first_upload_respects_available_aggregate_and_source_caps() {
+        let scene = Scene3d::new(sim_engine::Color::BLACK).unwrap();
         let limits = ThreeDRenderLimits::new(0, 100, 1).with_mesh_limits(8, 4096);
-        let budget = remaining_upload_budget(
-            limits,
-            scene.max_mesh_cpu_bytes() - 100,
-            scene.max_mesh_gpu_bytes() - 200,
-        )
-        .unwrap();
-        assert_eq!(budget.max_recovery_bytes(), 100);
-        assert_eq!(budget.max_gpu_bytes(), 200);
-        assert_eq!(
-            budget.max_staging_bytes(),
-            Mesh3dUploadBudget::default().max_staging_bytes()
-        );
-        let source_limited = remaining_upload_budget(limits, 0, 0).unwrap();
-        assert_eq!(source_limited.max_recovery_bytes(), 4096);
-        for (cpu, gpu) in [
-            (scene.max_mesh_cpu_bytes(), 0),
-            (0, scene.max_mesh_gpu_bytes()),
-            (usize::MAX, usize::MAX),
-        ] {
-            assert!(remaining_upload_budget(limits, cpu, gpu).is_err());
-        }
+        let budget = upload_budget(limits, &scene, false).unwrap();
+        assert_eq!(budget.max_recovery_bytes(), 4096);
+        assert_eq!(budget.max_gpu_bytes(), scene.budget().max_mesh_gpu_bytes());
     }
 }

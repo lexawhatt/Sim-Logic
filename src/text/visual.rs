@@ -1,13 +1,11 @@
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use bevy_ecs::prelude::Component;
-use sim_engine::{
-    Color, FontBudgetResource, FontError, GlyphRunBudget, Layer, LogicalScreenPosition, ShapedLine,
-};
+use sim_engine::{Color, GlyphRunBudget, Layer, LogicalScreenPosition, ShapedLine};
 
 use crate::screen::ScreenVisualError;
 
-use super::{TextError, TextFont};
+use super::{TextError, TextFont, TextPreparationSession};
 
 /// Horizontal alignment of a line's typographic advance around its baseline anchor.
 ///
@@ -75,9 +73,8 @@ impl TextMetrics {
     }
 }
 
-#[derive(Debug, PartialEq)]
 struct PreparedText {
-    text: String,
+    line: ShapedLine,
     metrics: TextMetrics,
     minimum_x: f32,
     maximum_x: f32,
@@ -91,6 +88,16 @@ impl PreparedText {
         let line =
             font.face()
                 .shape_line(text, &settings.style(1.0)?, &settings.layout_budget())?;
+        Self::from_line(font, line)
+    }
+
+    fn from_line(font: &TextFont, line: ShapedLine) -> Result<Self, TextError> {
+        let settings = font.settings();
+        line.validate_for(
+            font.face(),
+            &settings.style(1.0)?,
+            &settings.layout_budget(),
+        )?;
         let metrics = TextMetrics::from_line(&line);
         let run_budget = settings.atlas_budget().run_budget();
         let required = metrics
@@ -106,34 +113,45 @@ impl PreparedText {
                 max_retained_bytes: run_budget.max_retained_bytes(),
             });
         }
-        let mut owned = String::new();
-        owned
-            .try_reserve_exact(text.len())
-            .map_err(|source| TextError::AllocationFailed { source })?;
-        let limit = settings.layout_budget().max_text_bytes();
-        if owned.capacity() > limit {
-            return Err(TextError::Font(FontError::BudgetExceeded {
-                resource: FontBudgetResource::TextBytes,
-                required: owned.capacity(),
-                limit,
-            }));
-        }
-        owned.push_str(text);
         let mut result = Self {
-            text: owned,
+            line,
             metrics,
             minimum_x: metrics.advance.min(0.0),
             maximum_x: metrics.advance.max(0.0),
             minimum_y: -metrics.ascent,
             maximum_y: -metrics.descent,
         };
-        for glyph in line.glyphs() {
+        for glyph in result.line.glyphs() {
             result.minimum_x = result.minimum_x.min(glyph.logical_x());
             result.maximum_x = result.maximum_x.max(glyph.logical_x());
             result.minimum_y = result.minimum_y.min(glyph.logical_y());
             result.maximum_y = result.maximum_y.max(glyph.logical_y());
         }
         Ok(result)
+    }
+}
+
+impl fmt::Debug for PreparedText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // ShapedLine also retains its font; avoid dumping that shared source.
+        formatter
+            .debug_struct("PreparedText")
+            .field("text", &self.line.text())
+            .field("metrics", &self.metrics)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for PreparedText {
+    fn eq(&self, other: &Self) -> bool {
+        self.line.text() == other.line.text()
+            && self.line.style() == other.line.style()
+            && self.line.glyphs() == other.line.glyphs()
+            && self.metrics == other.metrics
+            && self.minimum_x == other.minimum_x
+            && self.maximum_x == other.maximum_x
+            && self.minimum_y == other.minimum_y
+            && self.maximum_y == other.maximum_y
     }
 }
 
@@ -158,8 +176,10 @@ impl PreparedText {
 ///
 /// Raster size, atlas space, and GPU allocation are checked later by desktop
 /// presentation. CPU validation alone cannot guarantee a glyph fits every DPI
-/// or device. Engine currently reshapes changed text when preparing its GPU run;
-/// unchanged desktop runs reuse their layout and buffers.
+/// or device. Desktop preparation passes this retained CPU line directly to
+/// Engine at scale 1.0. Other display scales require a DPI-specific line because
+/// Engine's prepared-line provenance includes exact DPI; that line is shaped
+/// only on a changed label or resource rebuild, never for an unchanged run.
 #[derive(Debug, Clone, PartialEq, Component)]
 pub struct ScreenTextVisual {
     font: TextFont,
@@ -184,7 +204,32 @@ impl ScreenTextVisual {
         position: LogicalScreenPosition,
     ) -> Result<Self, TextError> {
         validate_position(position)?;
-        let prepared = Arc::new(PreparedText::new(&font, text)?);
+        let prepared = PreparedText::new(&font, text)?;
+        Self::from_prepared(font, prepared, position)
+    }
+
+    /// Creates a label using a caller-owned reusable shaping session.
+    ///
+    /// The session fixes one registered font and logical size at scale 1.0.
+    /// It reuses parsed shaping state, not mutable storage held by older labels.
+    /// The returned value owns its line and does not borrow the session.
+    pub fn new_with_session(
+        session: &mut TextPreparationSession<'_>,
+        text: &str,
+        position: LogicalScreenPosition,
+    ) -> Result<Self, TextError> {
+        validate_position(position)?;
+        let font = session.font().clone();
+        let prepared = PreparedText::from_line(&font, session.shape_line(text)?)?;
+        Self::from_prepared(font, prepared, position)
+    }
+
+    fn from_prepared(
+        font: TextFont,
+        prepared: PreparedText,
+        position: LogicalScreenPosition,
+    ) -> Result<Self, TextError> {
+        let prepared = Arc::new(prepared);
         let result = Self {
             font,
             prepared,
@@ -205,7 +250,16 @@ impl ScreenTextVisual {
 
     /// Returns the original UTF-8 single line without allocating or reshaping.
     pub fn text(&self) -> &str {
-        &self.prepared.text
+        self.prepared.line.text()
+    }
+
+    /// Returns immutable Engine shaping output, including exact font/style provenance.
+    ///
+    /// Logical labels prepare at scale 1.0. A different-DPI atlas must not consume
+    /// this line as though its style matched; desktop handles that rebuild itself.
+    /// The UTF-8 and glyph metadata are shared with every clone and snapshot.
+    pub fn shaped_line(&self) -> &ShapedLine {
+        &self.prepared.line
     }
 
     /// Returns DPI-independent typographic metrics from the latest successful preparation.
@@ -218,13 +272,23 @@ impl ScreenTextVisual {
         self.metrics().glyph_count()
     }
 
-    /// Returns the immutable retained UTF-8 String capacity in bytes.
+    /// Returns a conservative upper bound on retained UTF-8 storage in bytes.
     ///
-    /// A clone shares these bytes. Extraction may conservatively count each
-    /// active label separately when enforcing its aggregate text-byte limit.
-    /// Font bytes and fixed-sized prepared metadata are excluded.
+    /// Since Engine 0.4 owns the UTF-8 together with glyph metadata, this includes
+    /// both capacities, exactly as [`Self::retained_layout_bytes`]. It no longer
+    /// measures the String allocation alone. Font and fixed metadata are excluded.
+    /// Extraction's text-byte allowance independently counts `text().len()`.
     pub fn retained_text_bytes(&self) -> usize {
-        self.prepared.text.capacity()
+        self.retained_layout_bytes()
+    }
+
+    /// Returns retained UTF-8 plus shaped-glyph Vec capacity bytes.
+    ///
+    /// This is Engine's actual capacity accounting, shared by clones, excluding
+    /// font storage, allocator overhead and this value's fixed metadata. It is
+    /// not a measurement of desktop atlas or GPU memory.
+    pub fn retained_layout_bytes(&self) -> usize {
+        self.prepared.line.allocation_bytes()
     }
 
     /// Returns the logical-pixel baseline anchor before horizontal alignment.
@@ -275,6 +339,32 @@ impl ScreenTextVisual {
         }
         let mut candidate = self.clone();
         candidate.prepared = Arc::new(PreparedText::new(&self.font, text)?);
+        candidate.validate()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Changes text using reusable shaping state for this exact font registration.
+    ///
+    /// A foreign registration is rejected even when UTF-8 is unchanged. An exact
+    /// text match with the correct session performs no shaping. Any error preserves
+    /// all visual fields and earlier snapshots; session scratch may have changed.
+    /// Successful changes own fresh line storage, so this is not a zero-allocation
+    /// update promise. The borrowed session never becomes part of the component.
+    pub fn set_text_with_session(
+        &mut self,
+        session: &mut TextPreparationSession<'_>,
+        text: &str,
+    ) -> Result<(), TextError> {
+        if session.font() != &self.font {
+            return Err(sim_engine::ShapedLineError::FontMismatch.into());
+        }
+        if self.text() == text {
+            return Ok(());
+        }
+        let prepared = PreparedText::from_line(&self.font, session.shape_line(text)?)?;
+        let mut candidate = self.clone();
+        candidate.prepared = Arc::new(prepared);
         candidate.validate()?;
         *self = candidate;
         Ok(())

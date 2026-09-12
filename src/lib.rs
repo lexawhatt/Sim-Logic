@@ -27,6 +27,16 @@ pub mod desktop;
 pub mod easter_eggs;
 #[path = "ecs/events.rs"]
 pub mod events;
+/// Engine's CPU-only font loading, shaping and reusable layout primitives.
+/// Enable `fonts` without default features to use these without a GPU or window.
+#[cfg(feature = "fonts")]
+pub mod fonts {
+    pub use sim_engine::{
+        FontBudget, FontBudgetResource, FontError, FontFace, LogicalPixels, PhysicalPerLogical,
+        RasterizedGlyph, ShapedGlyph, ShapedLine, ShapedLineError, TextDirection, TextLayoutBudget,
+        TextShapingSession, TextStyle,
+    };
+}
 #[path = "rendering/extraction.rs"]
 mod extraction;
 #[path = "application/headless.rs"]
@@ -99,9 +109,11 @@ pub mod prelude {
     #[cfg(feature = "desktop")]
     pub use sim_engine::RendererPresentMode;
     pub use sim_engine::{
-        Camera2d, Camera2dError, Camera3d, Color, LogicalPixels, LogicalScreenPosition,
-        LogicalScreenVector, LogicalViewport, Rotation3d, Transform3d, Vec2, Vec3,
-        WireframeStyle3d, WorldLength,
+        AmbientLight3d, Camera2d, Camera2dError, Camera3d, Color, DirectionalLight3d, Fog3d,
+        Lighting3d, LogicalPixels, LogicalScreenPosition, LogicalScreenVector, LogicalViewport,
+        Mesh3dAttributes, Rotation3d, SurfaceLighting3d, SurfaceSidedness3d, SurfaceStyle3d,
+        TextureAddressMode3d, TextureUvTransform3d, Transform3d, Vec2, Vec3, WireframeStyle3d,
+        WorldLength,
     };
 
     pub use crate::ComponentTuple;
@@ -117,8 +129,9 @@ pub mod prelude {
     pub use crate::commands::{CommandEnqueueError, LogicCommands as Commands};
     #[cfg(feature = "desktop")]
     pub use crate::desktop::{
-        DesktopConfig, DesktopExitReason, DesktopImageError, DesktopPointerError, DesktopRunError,
-        DesktopRunReport, DesktopThreeDError,
+        DesktopConfig, DesktopExitReason, DesktopGpuTimingSample, DesktopGpuTimings,
+        DesktopImageError, DesktopPointerError, DesktopRunError, DesktopRunReport,
+        DesktopThreeDError, DesktopThreeDUpdates,
     };
     pub use crate::events::{EventReader, EventSendError, EventWriter, WorldEvent};
     pub use crate::headless::{
@@ -148,12 +161,14 @@ pub mod prelude {
     pub use crate::system::{Stage, SystemRunFailure, SystemSetupError};
     #[cfg(feature = "text")]
     pub use crate::text::{
-        ScreenTextVisual, TextAlignment, TextError, TextFont, TextLimits, TextMetrics, TextSettings,
+        ScreenTextVisual, TextAlignment, TextError, TextFont, TextLimits, TextMetrics,
+        TextPreparationSession, TextSettings,
     };
     pub use crate::three_d::{
         CuboidVisual3d, CuboidVisualError, MeshAsset3d, MeshVisual3d, MeshVisualError,
-        ResolvedCuboid3d, ResolvedMesh3d, ThreeDExtractionError, ThreeDLimitResource,
-        ThreeDRenderLimits, ThreeDSnapshot, View3d, View3dError,
+        ResolvedCuboid3d, ResolvedMesh3d, TextureAsset3d, TextureVisual3d, TextureVisualError,
+        ThreeDExtractionError, ThreeDLimitResource, ThreeDRenderLimits, ThreeDSnapshot,
+        ThreeDSurfacePolicy, View3d, View3dError,
     };
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;

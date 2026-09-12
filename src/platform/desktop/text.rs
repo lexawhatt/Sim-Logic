@@ -13,13 +13,17 @@ use crate::{
     text::{TextError, TextFont},
 };
 
+#[path = "text/prepared.rs"]
+mod prepared;
+use prepared::DesktopPreparedLine;
+
 /// A managed label failed desktop preparation after a valid CPU frame.
 ///
 /// No partial surface frame is presented. Accepted earlier run updates or newly
 /// cached glyphs may remain; this is not rollback of CPU state or GPU uploads.
 #[derive(Debug)]
 pub enum DesktopTextError {
-    /// Font settings could not be represented at the current display DPI.
+    /// Font settings or a DPI-specific CPU line could not be prepared.
     Settings {
         /// Label requesting the font.
         source: LogicEntity,
@@ -32,6 +36,13 @@ pub enum DesktopTextError {
         source: LogicEntity,
         /// Underlying Engine error, including atlas-full and work-limit cases.
         error: sim_engine::TextError,
+    },
+    /// Engine rejected retained CPU layout or its atlas/run preparation.
+    Prepared {
+        /// Label whose prepared-line handoff failed.
+        source: LogicEntity,
+        /// Exact font/style provenance or underlying atlas/run failure.
+        error: sim_engine::PreparedTextError,
     },
     /// Bounded cache metadata could not be allocated.
     Allocation {
@@ -47,6 +58,9 @@ impl fmt::Display for DesktopTextError {
         match self {
             Self::Settings { source, error } => write!(f, "text {source:?} settings: {error}"),
             Self::Engine { source, error } => write!(f, "text {source:?} preparation: {error}"),
+            Self::Prepared { source, error } => {
+                write!(f, "text {source:?} prepared layout: {error}")
+            }
             Self::Allocation { requested_bytes } => {
                 write!(f, "text cache could not reserve {requested_bytes} bytes")
             }
@@ -60,6 +74,7 @@ impl Error for DesktopTextError {
         match self {
             Self::Settings { error, .. } => Some(error),
             Self::Engine { error, .. } => Some(error),
+            Self::Prepared { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -233,18 +248,28 @@ impl DesktopText {
             }
         };
         let atlas = &mut self.cache.fonts[font_index].atlas;
-        match self
+        let existing = self
             .cache
             .runs
-            .binary_search_by_key(&source.stable_bits(), |entry| entry.source.stable_bits())
-        {
+            .binary_search_by_key(&source.stable_bits(), |entry| entry.source.stable_bits());
+        if let Ok(index) = existing {
+            let entry = &self.cache.runs[index];
+            if entry.font == *font && entry.run.text() == visual.text() {
+                // Also avoids reconstructing a DPI-specific line for idle frames.
+                return Ok(());
+            }
+        }
+        let prepared = DesktopPreparedLine::new(visual.visual(), scale)
+            .map_err(|error| DesktopTextError::Settings { source, error })?;
+        let shaped = prepared.line();
+        match existing {
             Ok(index) => {
                 let entry = &mut self.cache.runs[index];
                 if entry.font != *font {
                     // Font changes replace one run, never mutate another label.
                     let run = atlas
-                        .prepare(renderer, visual.text(), font.settings().layout_budget())
-                        .map_err(|error| DesktopTextError::Engine { source, error })?;
+                        .prepare_from_shaped(renderer, shaped, font.settings().layout_budget())
+                        .map_err(|error| DesktopTextError::Prepared { source, error })?;
                     *entry = RunEntry {
                         source,
                         font: font.clone(),
@@ -252,13 +277,13 @@ impl DesktopText {
                     };
                 } else if entry.run.text() != visual.text() {
                     atlas
-                        .update(
+                        .update_from_shaped(
                             renderer,
                             &mut entry.run,
-                            visual.text(),
+                            shaped,
                             font.settings().layout_budget(),
                         )
-                        .map_err(|error| DesktopTextError::Engine { source, error })?;
+                        .map_err(|error| DesktopTextError::Prepared { source, error })?;
                 }
             }
             Err(index) => {
@@ -269,8 +294,8 @@ impl DesktopText {
                         requested_bytes: size_of::<RunEntry>(),
                     })?;
                 let run = atlas
-                    .prepare(renderer, visual.text(), font.settings().layout_budget())
-                    .map_err(|error| DesktopTextError::Engine { source, error })?;
+                    .prepare_from_shaped(renderer, shaped, font.settings().layout_budget())
+                    .map_err(|error| DesktopTextError::Prepared { source, error })?;
                 self.cache.runs.insert(
                     index,
                     RunEntry {
