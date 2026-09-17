@@ -5,7 +5,7 @@
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
 background. This is real geometric 3D, not projected screen rectangles.
-The bridge pins the official Engine `0.4.0` release from crates.io.
+The bridge pins the official Engine `0.4.1` release from crates.io.
 Cuboids keep their simple opaque/outline API.
 Host-built meshes support vertex colors, UVs, normals, Opaque/Mask/Blend
 materials, textures and explicit lighting/fog. Mesh import, normal generation,
@@ -204,9 +204,11 @@ there is no unbounded edit-history chain. Install an edited image with
 `texture.with_asset(revised_asset)` and `visual.set_texture`.
 
 `TextureVisual3d::texel_bytes()` reports nominal RGBA8 bytes for the complete
-mip chain. GPU region updates upload mip zero's dirty rectangle but regenerate
-and upload lower levels in full; a small patch is not necessarily a small
-total upload. Revision identity is process-local, never a persistent asset key.
+mip chain. Engine 0.4.1 region updates upload mip zero's dirty rectangle and
+regenerate/upload only affected rectangles in lower levels. Full CPU recovery
+copies and opacity scans remain; detaching immutable GPU aliases still copies
+the shared texture. Smaller uploads do not mean the entire update is local or
+allocation-free. Revision identity is process-local, never a persistent asset key.
 
 The bridge patches only a direct parent revision with the same mip policy;
 skipped revisions use a full replacement. Engine's final scene budgets and
@@ -231,12 +233,21 @@ initial creation, material-only replacements and composition uploads. The
 last preparation is available separately through `last_three_d_updates()`.
 These counters are not whole-frame allocation or universal FPS measurements.
 
+Engine 0.4.1 reuses preparation storage, skips unchanged uniform uploads, and
+can batch adjacent compatible Opaque/Mask instances without changing their
+order. `draw_call_count()` reports encoded draws, not object count; a smaller
+count does not imply missing objects. The managed bridge leaves Engine's new
+offscreen surface culling disabled; this update adds no Logic setting for it.
+That optional culling is separate from the automatic optimizations and does
+not relax admission budgets.
+
 Device recovery restores whole scenes, keeping object IDs, reserved geometry
 capacity, texture revisions and material settings. Targets are recreated for
 the new device. Pending timing associations are cleared, not reassigned to
 new-device frames. Engine 0.4.0 includes the fix for the earlier standalone
 textured `restore_mesh3d` material regression. The manual consumer test passes
-on NVIDIA/Vulkan with the original assertions; this is not Intel qualification.
+on Engine 0.4.1 with NVIDIA/Vulkan and the original assertions; this is not
+Intel qualification.
 The bridge keeps whole-scene recovery for shared-resource deduplication.
 
 ## Geometry, camera, and view switching

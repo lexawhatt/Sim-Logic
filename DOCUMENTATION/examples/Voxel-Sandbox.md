@@ -16,7 +16,7 @@ is embedded; there are no downloaded game assets. Sound is not enabled.
 
 ## Renderer limitation
 
-This prototype pins the official Engine `0.4.0` release from crates.io and
+This prototype pins the official Engine `0.4.1` release from crates.io and
 explicitly selects `ThreeDSurfacePolicy::Native` for the free camera. The
 library's default remains StrictPortable. No camera-coordinate workaround or
 second renderer is used.
@@ -202,7 +202,7 @@ diagnostics. Missing GPU samples are not reported as zero cost.
 This is a smoke drive, not a pixel oracle or an FPS guarantee. Standalone
 Engine recovery has a separate manual regression in
 [engine_dev4_gpu.rs](../../tests/engine_dev4_gpu.rs). Its original assertions pass
-on Engine 0.4.0 with NVIDIA/Vulkan; Intel is not confirmed. The Logic adapter still
+on Engine 0.4.1 with NVIDIA/Vulkan; Intel is not confirmed. The Logic adapter still
 restores whole scenes to preserve shared resources and object IDs.
 
 The shared model and runtime scenarios can run without a window:
