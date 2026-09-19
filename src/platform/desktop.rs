@@ -10,6 +10,8 @@
 mod capture;
 #[path = "desktop/images.rs"]
 mod images;
+#[path = "desktop/keyboard.rs"]
+mod keyboard;
 #[path = "desktop/pointer.rs"]
 mod pointer;
 #[cfg(feature = "text")]
@@ -19,6 +21,11 @@ mod text;
 mod three_d;
 #[path = "desktop/timing.rs"]
 mod timing;
+#[path = "desktop/window.rs"]
+mod window;
+use keyboard::map_key;
+#[cfg(test)]
+use winit::keyboard::KeyCode;
 
 pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
@@ -42,7 +49,7 @@ use winit::{
     error::{EventLoopError, OsError},
     event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::PhysicalKey,
     window::{Window, WindowId},
 };
 
@@ -80,6 +87,7 @@ pub struct DesktopConfig {
     present_mode: RendererPresentMode,
     frame_cache: FrameCacheBudget,
     gpu_timing: bool,
+    window_mode: crate::window::WindowMode,
 }
 
 impl Default for DesktopConfig {
@@ -91,11 +99,24 @@ impl Default for DesktopConfig {
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
             gpu_timing: false,
+            window_mode: crate::window::WindowMode::Windowed,
         }
     }
 }
 
 impl DesktopConfig {
+    /// Selects startup mode, without changing monitor video modes. An unavailable
+    /// explicit monitor rejects startup. OS submission is not visual confirmation.
+    pub fn set_window_mode(&mut self, mode: crate::window::WindowMode) -> &mut Self {
+        self.window_mode = mode;
+        self
+    }
+
+    /// Returns the startup mode (windowed by default).
+    pub const fn window_mode(&self) -> crate::window::WindowMode {
+        self.window_mode
+    }
+
     /// Creates validated settings for one logical-size window.
     pub fn new(
         title: impl Into<String>,
@@ -112,6 +133,7 @@ impl DesktopConfig {
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
             gpu_timing: false,
+            window_mode: crate::window::WindowMode::Windowed,
         })
     }
 
@@ -328,6 +350,8 @@ pub enum DesktopRunError {
     EventLoop(EventLoopError),
     /// Winit could not create the application window.
     Window(OsError),
+    /// The initial fullscreen request could not be submitted; no fallback is hidden.
+    WindowMode(crate::window::WindowModeFailure),
     /// Sim;Engine rejected display or resize configuration.
     RendererConfiguration(RendererConfigurationError),
     /// Surface reconfiguration failed after one logical frame had already
@@ -415,6 +439,9 @@ impl fmt::Display for DesktopRunError {
             Self::Runner(error) => write!(formatter, "logical runner failed: {error}"),
             Self::EventLoop(error) => write!(formatter, "desktop event loop failed: {error}"),
             Self::Window(error) => write!(formatter, "desktop window failed: {error}"),
+            Self::WindowMode(error) => {
+                write!(formatter, "initial window mode unavailable: {error:?}")
+            }
             Self::RendererConfiguration(error) => {
                 write!(formatter, "renderer configuration failed: {error}")
             }
@@ -469,6 +496,7 @@ impl Error for DesktopRunError {
             Self::Runner(error) => Some(error),
             Self::EventLoop(error) => Some(error),
             Self::Window(error) => Some(error),
+            Self::WindowMode(_) => None,
             Self::RendererConfiguration(error) => Some(error),
             Self::RendererConfigurationAfterFrame { error, .. } => Some(error),
             Self::LogicalViewport(error) => Some(error),
@@ -823,6 +851,10 @@ impl<A: Action> DesktopHost<A> {
             FrameOutcome::Advanced(report) => report,
         };
         self.synchronize_capture();
+        if let Some(window) = self.window.as_deref() {
+            self.runner
+                .with_window_controls(|controls| window::synchronize(window, controls));
+        }
         self.report.logic_frames = self.report.logic_frames.saturating_add(1);
         if matches!(report.transition(), FrameTransition::Committed { .. }) {
             self.report.committed_transitions = self.report.committed_transitions.saturating_add(1);
@@ -1114,6 +1146,18 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
                 return;
             }
         };
+        let initial_mode = self
+            .runner
+            .app_resource::<crate::window::WindowControls>()
+            .and_then(crate::window::WindowControls::pending_mode)
+            .unwrap_or(self.config.window_mode);
+        let initial_status = window::apply_mode(&window, initial_mode);
+        self.runner
+            .with_window_controls(|controls| controls.acknowledge_mode(initial_status));
+        if let crate::window::WindowModeStatus::Unavailable(error) = initial_status {
+            self.stop(event_loop, DesktopRunError::WindowMode(error));
+            return;
+        }
         let size = window.inner_size();
         let scale_factor = window.scale_factor();
         self.pointer_geometry = match DesktopPointerGeometry::new(size, scale_factor) {
@@ -1406,49 +1450,6 @@ fn present_diagnostics_only(
         .present()
 }
 
-fn map_key(key: PhysicalKey) -> Option<PhysicalKeyCode> {
-    match key {
-        PhysicalKey::Code(KeyCode::KeyW) => Some(PhysicalKeyCode::KeyW),
-        PhysicalKey::Code(KeyCode::KeyA) => Some(PhysicalKeyCode::KeyA),
-        PhysicalKey::Code(KeyCode::KeyS) => Some(PhysicalKeyCode::KeyS),
-        PhysicalKey::Code(KeyCode::KeyD) => Some(PhysicalKeyCode::KeyD),
-        PhysicalKey::Code(KeyCode::Enter) => Some(PhysicalKeyCode::Enter),
-        PhysicalKey::Code(KeyCode::Space) => Some(PhysicalKeyCode::Space),
-        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(PhysicalKeyCode::ArrowLeft),
-        PhysicalKey::Code(KeyCode::ArrowRight) => Some(PhysicalKeyCode::ArrowRight),
-        PhysicalKey::Code(KeyCode::ArrowDown) => Some(PhysicalKeyCode::ArrowDown),
-        PhysicalKey::Code(KeyCode::ArrowUp) => Some(PhysicalKeyCode::ArrowUp),
-        PhysicalKey::Code(KeyCode::Escape) => Some(PhysicalKeyCode::Escape),
-        PhysicalKey::Code(KeyCode::KeyP) => Some(PhysicalKeyCode::KeyP),
-        PhysicalKey::Code(KeyCode::KeyR) => Some(PhysicalKeyCode::KeyR),
-        PhysicalKey::Code(KeyCode::KeyN) => Some(PhysicalKeyCode::KeyN),
-        PhysicalKey::Code(KeyCode::Digit1) => Some(PhysicalKeyCode::Digit1),
-        PhysicalKey::Code(KeyCode::Digit2) => Some(PhysicalKeyCode::Digit2),
-        PhysicalKey::Code(KeyCode::Digit3) => Some(PhysicalKeyCode::Digit3),
-        PhysicalKey::Code(KeyCode::Digit4) => Some(PhysicalKeyCode::Digit4),
-        PhysicalKey::Code(KeyCode::Digit5) => Some(PhysicalKeyCode::Digit5),
-        PhysicalKey::Code(KeyCode::F3) => Some(PhysicalKeyCode::F3),
-        PhysicalKey::Code(KeyCode::F4) => Some(PhysicalKeyCode::F4),
-        PhysicalKey::Code(KeyCode::F5) => Some(PhysicalKeyCode::F5),
-        PhysicalKey::Code(KeyCode::F6) => Some(PhysicalKeyCode::F6),
-        PhysicalKey::Code(KeyCode::F8) => Some(PhysicalKeyCode::F8),
-        PhysicalKey::Code(KeyCode::F9) => Some(PhysicalKeyCode::F9),
-        PhysicalKey::Code(KeyCode::KeyL) => Some(PhysicalKeyCode::KeyL),
-        PhysicalKey::Code(KeyCode::KeyF) => Some(PhysicalKeyCode::KeyF),
-        PhysicalKey::Code(KeyCode::KeyM) => Some(PhysicalKeyCode::KeyM),
-        PhysicalKey::Code(KeyCode::KeyT) => Some(PhysicalKeyCode::KeyT),
-        PhysicalKey::Code(KeyCode::KeyV) => Some(PhysicalKeyCode::KeyV),
-        PhysicalKey::Code(KeyCode::Digit6) => Some(PhysicalKeyCode::Digit6),
-        PhysicalKey::Code(KeyCode::Digit7) => Some(PhysicalKeyCode::Digit7),
-        PhysicalKey::Code(KeyCode::Digit8) => Some(PhysicalKeyCode::Digit8),
-        PhysicalKey::Code(KeyCode::Digit9) => Some(PhysicalKeyCode::Digit9),
-        PhysicalKey::Code(KeyCode::F7) => Some(PhysicalKeyCode::F7),
-        PhysicalKey::Code(KeyCode::KeyE) => Some(PhysicalKeyCode::KeyE),
-        PhysicalKey::Code(KeyCode::ShiftLeft) => Some(PhysicalKeyCode::ShiftLeft),
-        PhysicalKey::Code(_) | PhysicalKey::Unidentified(_) => None,
-    }
-}
-
 const fn map_button_state(state: ElementState) -> ButtonState {
     match state {
         ElementState::Pressed => ButtonState::Pressed,
@@ -1667,6 +1668,77 @@ mod tests {
             (KeyCode::F7, PhysicalKeyCode::F7),
             (KeyCode::KeyE, PhysicalKeyCode::KeyE),
             (KeyCode::ShiftLeft, PhysicalKeyCode::ShiftLeft),
+            (KeyCode::Tab, PhysicalKeyCode::Tab),
+            (KeyCode::Digit0, PhysicalKeyCode::Digit0),
+            (KeyCode::F1, PhysicalKeyCode::F1),
+            (KeyCode::F2, PhysicalKeyCode::F2),
+            (KeyCode::F10, PhysicalKeyCode::F10),
+            (KeyCode::F11, PhysicalKeyCode::F11),
+            (KeyCode::F12, PhysicalKeyCode::F12),
+            (KeyCode::ShiftRight, PhysicalKeyCode::ShiftRight),
+            (KeyCode::ControlLeft, PhysicalKeyCode::ControlLeft),
+            (KeyCode::ControlRight, PhysicalKeyCode::ControlRight),
+            (KeyCode::AltLeft, PhysicalKeyCode::AltLeft),
+            (KeyCode::AltRight, PhysicalKeyCode::AltRight),
+            (KeyCode::SuperLeft, PhysicalKeyCode::SuperLeft),
+            (KeyCode::SuperRight, PhysicalKeyCode::SuperRight),
+            (KeyCode::Backspace, PhysicalKeyCode::Backspace),
+            (KeyCode::Delete, PhysicalKeyCode::Delete),
+            (KeyCode::Insert, PhysicalKeyCode::Insert),
+            (KeyCode::Home, PhysicalKeyCode::Home),
+            (KeyCode::End, PhysicalKeyCode::End),
+            (KeyCode::PageUp, PhysicalKeyCode::PageUp),
+            (KeyCode::PageDown, PhysicalKeyCode::PageDown),
+            (KeyCode::CapsLock, PhysicalKeyCode::CapsLock),
+            (KeyCode::NumLock, PhysicalKeyCode::NumLock),
+            (KeyCode::ScrollLock, PhysicalKeyCode::ScrollLock),
+            (KeyCode::PrintScreen, PhysicalKeyCode::PrintScreen),
+            (KeyCode::Pause, PhysicalKeyCode::Pause),
+            (KeyCode::ContextMenu, PhysicalKeyCode::ContextMenu),
+            (KeyCode::Backquote, PhysicalKeyCode::Backquote),
+            (KeyCode::Minus, PhysicalKeyCode::Minus),
+            (KeyCode::Equal, PhysicalKeyCode::Equal),
+            (KeyCode::BracketLeft, PhysicalKeyCode::BracketLeft),
+            (KeyCode::BracketRight, PhysicalKeyCode::BracketRight),
+            (KeyCode::Backslash, PhysicalKeyCode::Backslash),
+            (KeyCode::Semicolon, PhysicalKeyCode::Semicolon),
+            (KeyCode::Quote, PhysicalKeyCode::Quote),
+            (KeyCode::Comma, PhysicalKeyCode::Comma),
+            (KeyCode::Period, PhysicalKeyCode::Period),
+            (KeyCode::Slash, PhysicalKeyCode::Slash),
+            (KeyCode::KeyB, PhysicalKeyCode::KeyB),
+            (KeyCode::KeyC, PhysicalKeyCode::KeyC),
+            (KeyCode::KeyG, PhysicalKeyCode::KeyG),
+            (KeyCode::KeyH, PhysicalKeyCode::KeyH),
+            (KeyCode::KeyI, PhysicalKeyCode::KeyI),
+            (KeyCode::KeyJ, PhysicalKeyCode::KeyJ),
+            (KeyCode::KeyK, PhysicalKeyCode::KeyK),
+            (KeyCode::KeyO, PhysicalKeyCode::KeyO),
+            (KeyCode::KeyU, PhysicalKeyCode::KeyU),
+            (KeyCode::KeyX, PhysicalKeyCode::KeyX),
+            (KeyCode::KeyY, PhysicalKeyCode::KeyY),
+            (KeyCode::KeyZ, PhysicalKeyCode::KeyZ),
+            (KeyCode::Numpad0, PhysicalKeyCode::Numpad0),
+            (KeyCode::Numpad1, PhysicalKeyCode::Numpad1),
+            (KeyCode::Numpad2, PhysicalKeyCode::Numpad2),
+            (KeyCode::Numpad3, PhysicalKeyCode::Numpad3),
+            (KeyCode::Numpad4, PhysicalKeyCode::Numpad4),
+            (KeyCode::Numpad5, PhysicalKeyCode::Numpad5),
+            (KeyCode::Numpad6, PhysicalKeyCode::Numpad6),
+            (KeyCode::Numpad7, PhysicalKeyCode::Numpad7),
+            (KeyCode::Numpad8, PhysicalKeyCode::Numpad8),
+            (KeyCode::Numpad9, PhysicalKeyCode::Numpad9),
+            (KeyCode::NumpadEnter, PhysicalKeyCode::NumpadEnter),
+            (KeyCode::NumpadAdd, PhysicalKeyCode::NumpadAdd),
+            (KeyCode::NumpadSubtract, PhysicalKeyCode::NumpadSubtract),
+            (KeyCode::NumpadMultiply, PhysicalKeyCode::NumpadMultiply),
+            (KeyCode::NumpadDivide, PhysicalKeyCode::NumpadDivide),
+            (KeyCode::NumpadDecimal, PhysicalKeyCode::NumpadDecimal),
+            (KeyCode::NumpadEqual, PhysicalKeyCode::NumpadEqual),
+            (KeyCode::IntlBackslash, PhysicalKeyCode::IntlBackslash),
+            (KeyCode::IntlRo, PhysicalKeyCode::IntlRo),
+            (KeyCode::IntlYen, PhysicalKeyCode::IntlYen),
+            (KeyCode::KeyQ, PhysicalKeyCode::KeyQ),
         ];
 
         assert_eq!(mappings.map(|(_, portable)| portable), ALL_PHYSICAL_KEYS);
@@ -1674,8 +1746,7 @@ mod tests {
             assert_eq!(map_key(PhysicalKey::Code(platform)), Some(portable));
             assert_eq!(ALL_PHYSICAL_KEYS[physical_key_index(portable)], portable);
         }
-        assert_eq!(map_key(PhysicalKey::Code(KeyCode::KeyQ)), None);
-        assert_eq!(map_key(PhysicalKey::Code(KeyCode::Numpad1)), None);
+        assert_eq!(map_key(PhysicalKey::Code(KeyCode::MediaPlayPause)), None);
         assert_eq!(
             map_key(PhysicalKey::Unidentified(
                 winit::keyboard::NativeKeyCode::Unidentified

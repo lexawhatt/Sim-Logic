@@ -1,13 +1,14 @@
 use std::{collections::HashSet, error::Error};
 
 use sim_engine::{
-    Color, FontBudget, FontBudgetResource, FontError, GlyphRunBudget, Layer, LogicalScreenPosition,
-    TextAtlasBudget, TextDirection, TextLayoutBudget,
+    Color, FontBudget, FontBudgetResource, FontError, Layer, LogicalScreenPosition, TextDirection,
+    TextLayoutBudget,
 };
 
 use crate::identity::ApplicationId;
 
 use super::*;
+use super::{TextAtlasLimits as TextAtlasBudget, TextRunLimits as GlyphRunBudget};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -323,7 +324,7 @@ fn per_label_utf8_and_shaped_glyph_limits_are_independent() -> TestResult {
 fn desktop_run_limits_are_checked_headlessly_including_spaces() -> TestResult {
     let run = GlyphRunBudget::new(1, GlyphRunBudget::RETAINED_BYTES_PER_GLYPH)?;
     let atlas = TextAtlasBudget::new(64, 64, 16, run)?;
-    let font = font(TextSettings::default().with_atlas_budget(atlas))?;
+    let font = font(TextSettings::default().with_atlas_limits(atlas)?)?;
     let mut visual = ScreenTextVisual::new(font, "a", LogicalScreenPosition::new(0.0, 40.0))?;
     let before = visual.clone();
     assert!(matches!(

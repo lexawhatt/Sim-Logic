@@ -31,6 +31,42 @@ Application Resources once with `Application::register_app_resource` before
 starting. Factories and Startup cannot read or change live Application
 Resources.
 
+## Window modes, cursor shapes, and keyboard keys
+
+`DesktopConfig::set_window_mode(WindowMode::BorderlessFullscreen(
+FullscreenMonitor::Automatic))` requests borderless fullscreen at startup.
+`Windowed` is the default. Automatic delegates monitor choice to the window
+manager; Current and Primary require that exact reported monitor and reject
+the request if it is unavailable. No exclusive video-mode switch is performed.
+
+For runtime changes, register `WindowControls::default()` as an Application
+Resource, then call `request_mode` / `request_cursor` through
+`AppResMut<WindowControls>`. The desktop host applies pending values after the
+logical frame; last request wins, with no growing queue. These are immediate
+application-resource requests, not transactional Commands. They survive World
+replacement. Headless tests retain intent without fabricating an OS result.
+
+`mode_status()` reports NotSubmitted, Submitted(mode), or Unavailable(reason).
+Submitted means sent to the OS: window managers can apply it asynchronously or
+ignore it, and winit does not provide visual-completion confirmation. Startup
+monitor failure returns `DesktopRunError::WindowMode`; runtime failure is visible
+on the service without stopping the application. Resize/DPI events still use the
+normal renderer and pointer-geometry path.
+
+CursorShape includes Default, Pointer, Text, Crosshair, Grab/Grabbing, resize,
+and other standard cursors. Unavailable theme shapes may fall back to Default;
+`submitted_cursor()` describes the request, not theme pixels. This does not change
+PointerCapture's ownership of visibility and capture. Returning to Default when
+hover ends is application policy. Opening external URLs also remains an explicit
+application platform action, not an operation of the renderer.
+
+The portable key catalog includes all A-Z letters, digits 0-9, F1-F12, arrows,
+Tab, editing/navigation keys, left/right modifiers, common punctuation,
+international physical keys, and a distinct numeric keypad. Keys are physical
+locations, not text characters or IME input. Aliases, repeat suppression,
+source identities, bounded edges and focus-loss cancellation are unchanged.
+Bind F11 explicitly if your application wants that shortcut.
+
 ## Update order
 
 Systems in each stage run sequentially in registration order. Adding a

@@ -36,7 +36,7 @@ pub struct HeadlessRunner<A: Action> {
     events: EventRegistry,
     application_resources: ApplicationResourceRegistry,
     images: ImageAssetRegistry,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     texts: crate::text::TextRegistry,
     factories: Vec<RegisteredWorldFactory>,
     startup_factories: StageFactories,
@@ -75,13 +75,13 @@ impl<A: Action> HeadlessRunner<A> {
     }
 
     /// Returns setup-time font registrations, including fonts not drawn.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub fn text_font_count(&self) -> usize {
         self.texts.len()
     }
 
     /// Returns source font Vec capacity, excluding parser metadata and GPU caches.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub fn text_font_bytes(&self) -> usize {
         self.texts.font_bytes()
     }
@@ -152,6 +152,15 @@ impl<A: Action> HeadlessRunner<A> {
     pub(crate) fn with_pointer_capture<R>(
         &mut self,
         update: impl FnOnce(&mut crate::input::PointerCapture) -> R,
+    ) -> Option<R> {
+        self.application_resources
+            .with_mut(&mut self.active.world, update)
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) fn with_window_controls<R>(
+        &mut self,
+        update: impl FnOnce(&mut crate::window::WindowControls) -> R,
     ) -> Option<R> {
         self.application_resources
             .with_mut(&mut self.active.world, update)

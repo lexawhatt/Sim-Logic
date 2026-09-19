@@ -28,7 +28,7 @@ use crate::{
 };
 
 use super::RuntimeWorld;
-#[cfg(feature = "text")]
+#[cfg(feature = "headless-text")]
 use crate::{
     extraction::ScreenTextSource,
     text::{ScreenTextVisual, TextRegistry},
@@ -77,7 +77,7 @@ type ScreenImageExtractionQuery = QueryState<
     (Entity, &'static ManagedEntity, &'static ScreenImageVisual),
     (Allow<Disabled>, Without<Disabled>),
 >;
-#[cfg(feature = "text")]
+#[cfg(feature = "headless-text")]
 type ScreenTextExtractionQuery = QueryState<
     (Entity, &'static ManagedEntity, &'static ScreenTextVisual),
     (Allow<Disabled>, Without<Disabled>),
@@ -110,14 +110,33 @@ impl InterpolationQueries {
     }
 }
 
+type ScreenLineExtractionQuery = QueryState<
+    (
+        Entity,
+        &'static ManagedEntity,
+        &'static crate::screen::ScreenLineVisual,
+    ),
+    (Allow<Disabled>, Without<Disabled>),
+>;
+type ScreenCircleExtractionQuery = QueryState<
+    (
+        Entity,
+        &'static ManagedEntity,
+        &'static crate::screen::ScreenCircleVisual,
+    ),
+    (Allow<Disabled>, Without<Disabled>),
+>;
+
 pub(super) struct ExtractionQueries {
     cameras: CameraExtractionQuery,
     circles: CircleExtractionQuery,
     rectangles: RectangleExtractionQuery,
     lines: LineExtractionQuery,
     screen_rectangles: ScreenRectangleExtractionQuery,
+    screen_lines: ScreenLineExtractionQuery,
+    screen_circles: ScreenCircleExtractionQuery,
     screen_images: ScreenImageExtractionQuery,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     screen_texts: ScreenTextExtractionQuery,
     cuboids: CuboidExtractionQuery,
     meshes: MeshExtractionQuery,
@@ -131,8 +150,10 @@ impl ExtractionQueries {
             rectangles: world.query_filtered(),
             lines: world.query_filtered(),
             screen_rectangles: world.query_filtered(),
+            screen_lines: world.query_filtered(),
+            screen_circles: world.query_filtered(),
             screen_images: world.query_filtered(),
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             screen_texts: world.query_filtered(),
             cuboids: world.query_filtered(),
             meshes: world.query_filtered(),
@@ -249,7 +270,7 @@ pub(super) fn stage_runtime_world(
     limits: RenderLimits,
     extraction: &mut ExtractionBuffers,
     images: &ImageAssetRegistry,
-    #[cfg(feature = "text")] texts: &TextRegistry,
+    #[cfg(feature = "headless-text")] texts: &TextRegistry,
 ) -> Result<(), ExtractionError> {
     let background = runtime
         .world
@@ -290,8 +311,23 @@ pub(super) fn stage_runtime_world(
         .map(|(raw, entity, visual)| {
             ScreenSource::Image(ScreenImageSource::new(entity.handle(raw), visual, images))
         });
-    let screen_sources = screen_rectangles.chain(screen_images);
-    #[cfg(feature = "text")]
+    let screen_sources = screen_rectangles
+        .chain(screen_images)
+        .chain(
+            runtime
+                .extraction_queries
+                .screen_lines
+                .iter(&runtime.world)
+                .map(|(raw, entity, visual)| ScreenSource::Line(entity.handle(raw), *visual)),
+        )
+        .chain(
+            runtime
+                .extraction_queries
+                .screen_circles
+                .iter(&runtime.world)
+                .map(|(raw, entity, visual)| ScreenSource::Circle(entity.handle(raw), *visual)),
+        );
+    #[cfg(feature = "headless-text")]
     let screen_sources = screen_sources.chain(
         runtime
             .extraction_queries

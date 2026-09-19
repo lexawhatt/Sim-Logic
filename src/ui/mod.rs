@@ -5,7 +5,9 @@
 //! already applied by FixedUpdate. World/entity lifetime and eligible hit
 //! selection remain explicit application decisions.
 
+mod focus;
 mod pointer_button;
+pub use focus::{FocusCommand, FocusError, FocusOutcome, KeyboardFocus};
 pub use pointer_button::{
     PointerButton, PointerButtonCancellation, PointerButtonEvent, PointerButtonOutcome,
 };

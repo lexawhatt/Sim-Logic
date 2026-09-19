@@ -22,12 +22,12 @@ a desktop example to testing the same application without a window.
 
 ## Drawing
 
-- [Screen panels](rendering/Screen-HUD.md): rectangles that stay in place
-  while the World camera moves, geometric hit tests and explicit button ownership.
-- [Screen images](rendering/Screen-Images.md): assets, crop, tint, ordering,
+- [Screen panels](rendering/Screen-HUD.md): rounded panels, frame-owned vectors,
+  clips, geometric hit tests, pointer buttons and optional keyboard focus.
+- [Screen images](rendering/Screen-Images.md): assets, crop, tint, rotation, ordering,
   memory limits and the optional Ferris helper.
-- [Screen text](rendering/Text.md): optional real-font labels, alignment,
-  changing strings, limits and shared rendering caches.
+- [Screen text](rendering/Text.md): real-font labels, shared font styles,
+  headless shaping, alignment, changing strings, limits and rendering caches.
 - [Geometric 3D](rendering/ThreeD.md): cuboids, host-built meshes, depth and switching views.
 
 ## Example applications

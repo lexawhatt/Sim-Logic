@@ -165,12 +165,14 @@ pub struct RenderLimits {
     max_world_rectangles: usize,
     max_world_lines: usize,
     max_screen_rectangles: usize,
+    max_screen_lines: usize,
+    max_screen_circles: usize,
     max_screen_images: usize,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     max_screen_texts: usize,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     max_screen_text_bytes: usize,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     max_screen_text_glyphs: usize,
     world_scene_budget: SceneBudget,
     screen_scene_budget: SceneBudget,
@@ -195,12 +197,14 @@ impl RenderLimits {
             max_world_rectangles: DEFAULT_MAX_WORLD_RECTANGLES,
             max_world_lines: DEFAULT_MAX_WORLD_LINES,
             max_screen_rectangles: DEFAULT_MAX_SCREEN_RECTANGLES,
+            max_screen_lines: 256,
+            max_screen_circles: 256,
             max_screen_images: 0,
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             max_screen_texts: 0,
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             max_screen_text_bytes: 0,
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             max_screen_text_glyphs: 0,
             world_scene_budget,
             screen_scene_budget: DEFAULT_SCREEN_SCENE_BUDGET,
@@ -232,13 +236,32 @@ impl RenderLimits {
         self.max_screen_rectangles
     }
 
+    /// Returns the maximum screen-line source count; default 256, including empty clips.
+    pub const fn max_screen_lines(self) -> usize {
+        self.max_screen_lines
+    }
+    /// Returns the maximum screen-circle source count; default 256, including empty clips.
+    pub const fn max_screen_circles(self) -> usize {
+        self.max_screen_circles
+    }
+    /// Sets the screen-line count limit independently of shared scene work/byte limits.
+    pub const fn with_max_screen_lines(mut self, count: usize) -> Self {
+        self.max_screen_lines = count;
+        self
+    }
+    /// Sets the screen-circle count limit independently of shared scene work/byte limits.
+    pub const fn with_max_screen_circles(mut self, count: usize) -> Self {
+        self.max_screen_circles = count;
+        self
+    }
+
     /// Returns the enabled screen-image count limit (zero by default).
     pub const fn max_screen_images(self) -> usize {
         self.max_screen_images
     }
 
     /// Returns the enabled screen-text source count limit, zero by default.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub const fn max_screen_texts(self) -> usize {
         self.max_screen_texts
     }
@@ -247,7 +270,7 @@ impl RenderLimits {
     ///
     /// Each enabled visual counts its complete string, even when several share
     /// the same prepared text. This is a work limit, not a retained-memory cap.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub const fn max_screen_text_bytes(self) -> usize {
         self.max_screen_text_bytes
     }
@@ -256,7 +279,7 @@ impl RenderLimits {
     ///
     /// Each enabled visual counts its prepared glyphs, including whitespace.
     /// Multiple placements of one shared string each consume this allowance.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub const fn max_screen_text_glyphs(self) -> usize {
         self.max_screen_text_glyphs
     }
@@ -265,7 +288,7 @@ impl RenderLimits {
     ///
     /// Text is disabled by default. Also set the text byte and glyph allowances
     /// and desktop frame limits for glyph draws and font-atlas texture storage.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub const fn with_max_screen_texts(mut self, limit: usize) -> Self {
         self.max_screen_texts = limit;
         self
@@ -274,7 +297,7 @@ impl RenderLimits {
     /// Replaces only the aggregate screen-text UTF-8 byte allowance.
     ///
     /// Zero permits empty strings only; text source and glyph caps still apply.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub const fn with_max_screen_text_bytes(mut self, limit: usize) -> Self {
         self.max_screen_text_bytes = limit;
         self
@@ -284,7 +307,7 @@ impl RenderLimits {
     ///
     /// Zero permits labels with no shaped glyphs; it does not disable their
     /// source count or UTF-8 byte checks.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub const fn with_max_screen_text_glyphs(mut self, limit: usize) -> Self {
         self.max_screen_text_glyphs = limit;
         self

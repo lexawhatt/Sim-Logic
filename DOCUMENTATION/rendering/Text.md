@@ -21,9 +21,13 @@ your application. Supply trusted TTF/OTF bytes and follow that font's license.
 
 This program reads a font supplied by the caller, prepares a Cyrillic label,
 and inspects the extracted result without creating a window or GPU. Run it
-with `--no-default-features --features text` to omit the desktop host.
-The label `text` feature includes GPU atlas configuration types, so this
-headless label build still compiles GPU support; it does not initialize it.
+with `--no-default-features --features headless-text`. This profile includes
+managed labels, shaping, metrics, and extraction without compiling wgpu or winit.
+The existing `text` feature includes this CPU path plus Engine's GPU text bridge;
+use it with the default desktop feature for native drawing. `text` without
+default features still compiles GPU dependencies, as before. Desktop plus only
+`headless-text` reports `TextFeatureRequired` if a frame contains labels, rather
+than silently dropping them.
 For CPU font loading/shaping/rasterization primitives alone, use
 `--no-default-features --features fonts`. That separate feature does not
 enable labels, desktop hosting or GPU dependencies.
@@ -151,17 +155,48 @@ handles survive World replacement within the issuing Application. Extraction
 rejects a handle from another Application. Keeping a handle after application
 shutdown retains its shared font bytes until the last clone is dropped.
 
-One registration has a fixed logical em size and shaping direction. Register
-another configuration for a second font size. `TextSettings` accepts Engine's
-`FontBudget`, `TextLayoutBudget`, and `TextAtlasBudget`; these are ordinary
-configuration values, not GPU resources.
+One registration fixes a logical em size and shaping direction. For another
+size of the same face, use `app.register_font_style(&existing_font, settings)`.
+It shares the parsed face and source bytes without copying or parsing again,
+but creates an independent style/atlas identity. It consumes a registration
+slot, not additional source-byte budget. `shares_face_with` checks this sharing;
+separately loading identical bytes still creates separate sources.
+
+```rust
+use sim_logic::prelude::*;
+fn register_fonts<A: Action>(
+    app: &mut Application<A>,
+) -> LogicResult<(TextFont, TextFont, TextFont)> {
+    let body = app.register_font(
+        std::fs::read("assets/IBMPlexSans-Regular.ttf")?, TextSettings::new(18.0)?,
+    )?;
+    let heading = app.register_font_style(&body, TextSettings::new(28.0)?)?;
+    let logo = app.register_font(
+        std::fs::read("assets/SpaceGrotesk-Regular.ttf")?, TextSettings::new(48.0)?,
+    )?;
+    // Pass body, heading, or logo to each ScreenTextVisual::new call.
+    Ok((body, heading, logo))
+}
+```
+
+The names above are caller-supplied assets, not bundled fonts. Use trusted
+static TTF/OTF faces; font discovery, variable-axis selection, and fallback
+are not implemented. One font per label does not mean one font per application.
+
+`TextSettings` accepts Engine's CPU `FontBudget` and `TextLayoutBudget` in both
+profiles. `TextAtlasLimits` / `TextRunLimits` with `with_atlas_limits` configure
+the same retained-atlas/run limits without GPU types. With `text`, existing
+`with_atlas_budget(sim_engine::TextAtlasBudget)` remains available. CPU run-byte
+accounting is checked against the pinned Engine in a parity test; updating
+Engine requires keeping that test green. Per-style atlas/run bytes are not
+deduplicated merely because styles share a font face.
 
 | Setting | What it bounds |
 | --- | --- |
-| `TextLimits` | Font registration count and sum of source-font Vec capacities. Defaults: 8 registrations and 32 MiB. |
+| `TextLimits` | Style registration count and distinct loaded source-font Vec capacities. Defaults: 8 registrations and 32 MiB. |
 | `TextSettings::font_budget()` | Source capacity and declared font glyph count for one registration. |
 | `TextSettings::layout_budget()` | Each label's UTF-8 bytes and shaped glyph count; raster work per glyph. Defaults: 4096 bytes and 1024 glyphs per label. |
-| `TextSettings::atlas_budget()` | Fixed physical atlas dimensions, cached glyph count, and retained run limits. Default atlas: 1024 by 1024 RGBA, 4 MiB CPU plus 4 MiB GPU. |
+| `TextSettings::atlas_limits()` | Fixed physical atlas dimensions, cached glyph count, and retained run limits. Default atlas: 1024 by 1024 RGBA, 4 MiB CPU plus 4 MiB GPU when realized. |
 | `RenderLimits::with_max_screen_texts` | Active extracted text sources, including empty labels. Default: zero. |
 | `with_max_screen_text_bytes` / `with_max_screen_text_glyphs` | Aggregate UTF-8 input bytes and shaped glyph work per snapshot. Each placement counts separately. Defaults: zero. |
 | `FrameLimits` | Composed sources, commands, vertices, uploads, referenced textures, and draw calls. |
@@ -238,8 +273,8 @@ combining offsets, and one directional shaping run. It does not provide
 mixed-direction paragraph layout, automatic wrapping, fallback fonts, rich
 text, text selection, editing, buttons, or a layout tree. Newlines and control
 characters are rejected. Missing glyphs report an error instead of silently
-changing fonts. Labels currently have no independent user-specified clip;
-normal target clipping still applies.
+changing fonts. `set_clip(ScreenClip)` adds an independent fixed-screen clip
+without reshaping. See [screen clip scopes](Screen-HUD.md#rounded-cards-animated-vectors-and-clips).
 
 See [CPU tests](../../src/text/tests.rs),
 [prepared-label/session tests](../../tests/text_preparation.rs), and

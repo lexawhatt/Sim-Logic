@@ -252,7 +252,7 @@ fn synthetic_events_repeated_presses_and_unmapped_keys_use_no_queue_capacity()
         true,
     );
     host.collect_key(
-        PhysicalKey::Code(KeyCode::KeyQ),
+        PhysicalKey::Code(KeyCode::MediaPlayPause),
         ElementState::Pressed,
         false,
         false,

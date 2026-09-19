@@ -1,8 +1,8 @@
-//! Exact mixed screen ordering and bounded, reusable rectangle runs.
+//! Exact mixed screen ordering and bounded, reusable geometry runs.
 
 use std::mem::size_of;
 
-use sim_engine::{Color, SceneBudget, ScreenScene, ShapeStyle};
+use sim_engine::{Color, SceneBudget, ScreenScene};
 
 use super::{
     super::{ExtractionError, compare_visual_order},
@@ -11,11 +11,17 @@ use super::{
 
 /// One ordered screen source, after all world content.
 ///
-/// Images index `ExtractedFrame::resolved_screen_images`; rectangle runs are
-/// inspected with `ExtractedFrame::screen_rectangle_run_records`. These indices
+/// Images index `ExtractedFrame::resolved_screen_images`; geometry runs are
+/// inspected with `ExtractedFrame::screen_primitive_run_records`. The older
+/// `screen_rectangle_run_records` selects only rectangles from a run. Indices
 /// belong only to their containing snapshot, not to future frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenDraw {
+    /// A contiguous run of mixed rectangles, lines and circles, batched together.
+    Primitives {
+        /// Snapshot-local geometry-run index (same namespace as rectangle runs).
+        run: usize,
+    },
     /// One contiguous subsequence of sorted screen rectangles.
     Rectangles {
         /// Snapshot-local rectangle-run index.
@@ -27,7 +33,7 @@ pub enum ScreenDraw {
         index: usize,
     },
     /// One prepared screen label, sharing mixed painter order with other kinds.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     Text {
         /// Index into the snapshot's resolved text list.
         index: usize,
@@ -37,7 +43,7 @@ pub enum ScreenDraw {
 #[derive(Clone, Copy)]
 enum NonRectangleKind {
     Image,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     Text,
 }
 
@@ -65,15 +71,15 @@ impl ScreenExtractionBuffer {
             // Keep the established single-scene path and do not build duplicate
             // rectangle runs for applications that have not enabled images.
             self.runs.clear();
-            if !self.resolved.is_empty() {
-                self.push_draw(ScreenDraw::Rectangles { run: 0 })?;
+            if self.geometry_len() != 0 {
+                self.push_draw(self.geometry_draw(0))?;
             }
             return Ok(());
         }
 
         let mut rectangle = 0;
         let mut image = 0;
-        #[cfg(feature = "text")]
+        #[cfg(feature = "headless-text")]
         let mut text = 0;
         let mut run_start = 0;
         let mut run_count = 0;
@@ -86,7 +92,7 @@ impl ScreenExtractionBuffer {
                     image.source(),
                 )
             });
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             let next = match (next, self.texts.get(text)) {
                 (Some(image), Some(text))
                     if !compare_visual_order(
@@ -109,7 +115,7 @@ impl ScreenExtractionBuffer {
                 )),
                 (image, None) => image,
             };
-            let take_rectangle = match (self.resolved.get(rectangle), next) {
+            let take_rectangle = match (self.geometry(rectangle), next) {
                 (Some(left), Some(right)) => !compare_visual_order(
                     left.layer(),
                     left.draw_order_depth(),
@@ -128,7 +134,7 @@ impl ScreenExtractionBuffer {
             } else if let Some((kind, _, _, _)) = next {
                 if run_start != rectangle {
                     self.prepare_run(run_count, run_start, rectangle, budget)?;
-                    self.push_draw(ScreenDraw::Rectangles { run: run_count })?;
+                    self.push_draw(self.geometry_draw(run_count))?;
                     run_count += 1;
                 }
                 match kind {
@@ -136,7 +142,7 @@ impl ScreenExtractionBuffer {
                         self.push_draw(ScreenDraw::Image { index: image })?;
                         image += 1;
                     }
-                    #[cfg(feature = "text")]
+                    #[cfg(feature = "headless-text")]
                     NonRectangleKind::Text => {
                         self.push_draw(ScreenDraw::Text { index: text })?;
                         text += 1;
@@ -147,7 +153,7 @@ impl ScreenExtractionBuffer {
         }
         if run_start != rectangle {
             self.prepare_run(run_count, run_start, rectangle, budget)?;
-            self.push_draw(ScreenDraw::Rectangles { run: run_count })?;
+            self.push_draw(self.geometry_draw(run_count))?;
             run_count += 1;
         }
         self.runs.truncate(run_count);
@@ -200,19 +206,15 @@ impl ScreenExtractionBuffer {
             self.runs[index].scene = ScreenScene::with_budget(Color::TRANSPARENT, run_budget)
                 .map_err(ExtractionError::ScreenScene)?;
         }
-        let run = &mut self.runs[index];
-        run.start = start;
-        run.end = end;
-        run.scene.clear();
-        for rectangle in &self.resolved[start..end] {
-            run.scene
-                .try_square_rect_on_layer(
-                    rectangle.layer(),
-                    rectangle.position(),
-                    rectangle.size(),
-                    ShapeStyle::filled(rectangle.color()),
-                )
-                .map_err(ExtractionError::ScreenScene)?;
+        self.runs[index].start = start;
+        self.runs[index].end = end;
+        self.runs[index].scene.clear();
+        for position in start..end {
+            if let Some(primitive) = self.geometry(position) {
+                primitive
+                    .append(&mut self.runs[index].scene)
+                    .map_err(ExtractionError::ScreenScene)?;
+            }
         }
         Ok(())
     }

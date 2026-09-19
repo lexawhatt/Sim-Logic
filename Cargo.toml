@@ -13,7 +13,8 @@ desktop = ["sim-engine/wgpu", "dep:winit", "dep:pollster"]
 audio = ["dep:rodio"]
 easter-eggs = ["dep:png"]
 fonts = ["sim-engine/fonts"]
-text = ["fonts", "sim-engine/text"]
+headless-text = ["fonts"]
+text = ["headless-text", "sim-engine/text"]
 
 [dependencies]
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std", "debug"] }
@@ -100,6 +101,11 @@ required-features = ["desktop", "text"]
 [[example]]
 name = "input_cancellation"
 path = "examples/input_cancellation/main.rs"
+
+[[example]]
+name = "interface_lab"
+path = "examples/interface_lab/main.rs"
+required-features = ["desktop", "text"]
 
 [[example]]
 name = "ui_buttons"

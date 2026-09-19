@@ -86,7 +86,7 @@ impl<A: Action> HeadlessRunner<A> {
             events: application.events,
             application_resources: application.application_resources,
             images: application.images,
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             texts: application.texts,
             factories: application.factories,
             startup_factories: application.startup,
@@ -237,7 +237,7 @@ impl<A: Action> HeadlessRunner<A> {
             self.config.render(),
             &mut self.extraction,
             &self.images,
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             &self.texts,
         )
         .map_err(CandidateFailure::Extraction)?;

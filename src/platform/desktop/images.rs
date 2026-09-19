@@ -55,11 +55,14 @@ pub enum DesktopImageError {
     },
     /// A published draw plan referenced an unavailable image or rectangle run.
     InvalidDrawPlan,
+    /// Managed text was enabled for CPU extraction without the `text` GPU bridge.
+    TextFeatureRequired,
 }
 
 impl fmt::Display for DesktopImageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::TextFeatureRequired => formatter.write_str("desktop labels require the `text` feature; `headless-text` alone only extracts CPU text"),
             Self::MissingAsset { source, image } => write!(
                 formatter,
                 "screen image {source:?} references unavailable asset {image:?}"
@@ -211,6 +214,10 @@ pub(super) fn needs_managed_presentation(
     extracted: &ExtractedFrame,
     _images: &DesktopImages,
 ) -> bool {
+    #[cfg(all(feature = "headless-text", not(feature = "text")))]
+    if !extracted.resolved_screen_texts().is_empty() {
+        return true;
+    }
     #[cfg(feature = "text")]
     if !extracted.resolved_screen_texts().is_empty() || _images.texts.has_runs() {
         return true;
@@ -406,7 +413,9 @@ fn preflight_with_target(
     }
     for draw in extracted.screen_draws() {
         match *draw {
-            ScreenDraw::Rectangles { run } => {
+            #[cfg(all(feature = "headless-text", not(feature = "text")))]
+            ScreenDraw::Text { .. } => return Err(DesktopImageError::TextFeatureRequired.into()),
+            ScreenDraw::Rectangles { run } | ScreenDraw::Primitives { run } => {
                 let scene = extracted
                     .screen_rectangle_run(run)
                     .ok_or(DesktopImageError::InvalidDrawPlan)?;
@@ -489,6 +498,34 @@ fn screen_rectangle(position: LogicalScreenPosition, size: LogicalScreenVector) 
     )
 }
 
+fn image_camera(
+    viewport: LogicalViewport,
+    position: LogicalScreenPosition,
+    size: LogicalScreenVector,
+    rotation: f32,
+) -> Result<Camera2d, FrameComposerError> {
+    let mut camera = screen_camera(viewport)?;
+    if rotation == 0.0 {
+        return Ok(camera);
+    }
+    let p = position.to_vec2() + size.to_vec2() * 0.5;
+    let pivot = Vec2::new(p.x(), -p.y());
+    let delta = camera.center() - pivot;
+    let (sin, cos) = rotation.sin_cos();
+    let center = pivot
+        + Vec2::new(
+            delta.x() * cos - delta.y() * sin,
+            delta.x() * sin + delta.y() * cos,
+        );
+    camera
+        .set_center(center)
+        .map_err(|_| FrameComposerError::Frame(RendererFrameError::InvalidGeometryTransform))?;
+    camera
+        .set_rotation(-rotation)
+        .map_err(|_| FrameComposerError::Frame(RendererFrameError::InvalidGeometryTransform))?;
+    Ok(camera)
+}
+
 pub(super) fn present(
     renderer: &mut WgpuRenderer,
     extracted: &ExtractedFrame,
@@ -510,7 +547,6 @@ pub(super) fn present(
     let viewport = renderer
         .logical_viewport()
         .map_err(|_| FrameComposerError::Frame(RendererFrameError::InvalidViewport))?;
-    let camera = screen_camera(viewport)?;
     images.prepare(renderer, registry, extracted)?;
     #[cfg(feature = "text")]
     images.texts.prepare(renderer, extracted)?;
@@ -531,7 +567,9 @@ pub(super) fn present(
         // CPU layer/depth/entity sorting therefore survives interleaved types.
         let options = FramePassOptions::new(1);
         match *draw {
-            ScreenDraw::Rectangles { run } => {
+            #[cfg(all(feature = "headless-text", not(feature = "text")))]
+            ScreenDraw::Text { .. } => return Err(DesktopImageError::TextFeatureRequired.into()),
+            ScreenDraw::Rectangles { run } | ScreenDraw::Primitives { run } => {
                 let scene = extracted
                     .screen_rectangle_run(run)
                     .ok_or(DesktopImageError::InvalidDrawPlan)?;
@@ -548,6 +586,11 @@ pub(super) fn present(
                         image: visual.image(),
                     },
                 )?;
+                let options = match visual.clip() {
+                    crate::screen::ScreenClip::Empty => continue,
+                    crate::screen::ScreenClip::Unclipped => options,
+                    crate::screen::ScreenClip::Rectangle(clip) => options.with_clip(clip),
+                };
                 let region = visual
                     .source_region()
                     .map(|region| {
@@ -568,7 +611,12 @@ pub(super) fn present(
                     region,
                     screen_rectangle(visual.position(), visual.size()),
                     0.0,
-                    camera,
+                    image_camera(
+                        viewport,
+                        visual.position(),
+                        visual.size(),
+                        visual.rotation(),
+                    )?,
                     visual.tint(),
                     sampling,
                     options,
@@ -581,6 +629,11 @@ pub(super) fn present(
                     .get(index)
                     .ok_or(super::text::DesktopTextError::InvalidDrawPlan)?;
                 if !text.text().is_empty() {
+                    let options = match text.visual().clip() {
+                        crate::screen::ScreenClip::Empty => continue,
+                        crate::screen::ScreenClip::Unclipped => options,
+                        crate::screen::ScreenClip::Rectangle(clip) => options.with_clip(clip),
+                    };
                     images.texts.draw(&mut frame, text, options)?;
                 }
             }
@@ -594,6 +647,29 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn rotated_images_keep_center_and_clockwise_logical_geometry_for_any_viewport()
+    -> crate::LogicResult {
+        let position = LogicalScreenPosition::new(100.0, 80.0);
+        let size = LogicalScreenVector::new(100.0, 20.0);
+        let pivot = Vec2::new(150.0, -90.0);
+        for (width, height) in [(800.0, 600.0), (640.0, 480.0), (300.0, 900.0)] {
+            let viewport = LogicalViewport::new(width, height)?;
+            for angle in [0.0, std::f32::consts::FRAC_PI_2, 0.4, -0.7] {
+                let camera = image_camera(viewport, position, size, angle)?;
+                let center = camera.world_to_screen(pivot, viewport)?.to_vec2();
+                assert!((center.x() - 150.0).abs() < 0.0002);
+                assert!((center.y() - 90.0).abs() < 0.0002);
+                let right = camera
+                    .world_to_screen(pivot + Vec2::new(50.0, 0.0), viewport)?
+                    .to_vec2();
+                assert!((right.x() - (150.0 + 50.0 * angle.cos())).abs() < 0.0002);
+                assert!((right.y() - (90.0 + 50.0 * angle.sin())).abs() < 0.0002);
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn cache_reuses_resources_until_renderer_invalidation() {

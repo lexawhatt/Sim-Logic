@@ -101,8 +101,10 @@ The first experimental slice can:
 - let systems return `Result` and stop their stage with a reported error;
 - pass bounded typed events between ordered systems in one stage invocation;
 - keep explicitly registered typed Application Resources across World replacement;
-- map W/A/S/D, P/R/N, E/L/F/M/T/V, digits 1-9, arrows, Space, Left Shift,
-  Enter, Escape, and F3-F9 to application-defined actions;
+- map ordinary physical keyboard keys (A-Z, 0-9, F1-F12, navigation,
+  left/right modifiers, punctuation, and keypad) to application-defined actions;
+- request borderless fullscreen/windowed mode and native hover cursors through
+  an optional, headless-testable `WindowControls` service;
 - map left, right, and middle mouse buttons to actions with click-time pointer
   samples and explicit screen-to-world coordinate conversion;
 - request optional desktop mouse capture, inspect its actual status, and
@@ -133,12 +135,15 @@ The first experimental slice can:
 - interpolate `Transform2d` and the active camera center between fixed ticks;
 - extract a camera, filled circles, axis-aligned rectangles, and anchored lines
   into one bounded Sim;Engine scene;
-- draw screen-fixed rectangle panels above that scene, with logical-pixel
-  layout that keeps updating while simulation is paused;
+- draw screen-fixed rounded panels, outlined shapes, lines, and circles above
+  that scene, with explicit clips and updates during simulation pause;
+- navigate caller-supplied eligible UI targets with optional modal keyboard focus;
 - register bounded immutable RGBA8 assets and draw screen images with source
-  regions, tint, filtering, and shared rectangle/image ordering;
+  regions, tint, filtering, center rotation, and shared screen ordering;
 - register fonts and draw optional single-line screen text with alignment,
-  changing content, tint, and shared text/image/rectangle ordering;
+  changing content, tint, clips, and shared screen ordering; share one loaded
+  font face across sizes, or extract labels without GPU dependencies using
+  `--no-default-features --features headless-text`;
 - extract opt-in cuboids and editable host-built meshes, including vertex colors,
   normals, textures, Opaque/Mask/Blend surfaces, lighting and fog, into Engine's
   retained scene; choose strict portable or native surface rendering explicitly;

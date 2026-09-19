@@ -1,9 +1,9 @@
 //! Optional single-line screen labels using Sim;Engine's font implementation.
 //!
 //! Fonts and validated label values can be created and inspected without a
-//! window or GPU. The `text` feature includes Engine's GPU atlas types because
-//! label settings also configure desktop limits. The separate `fonts` feature
-//! exposes Engine's CPU font primitives without GPU dependencies.
+//! window or GPU. `headless-text` with default features disabled also omits
+//! GPU compile dependencies. `text` adds Engine's GPU bridge; `fonts` alone
+//! exposes CPU font primitives without enabling managed labels.
 //! Font discovery, fallback, wrapping, text input, and widgets are not included.
 //!
 //! ```no_run
@@ -31,7 +31,9 @@
 //! texture allowance for every referenced font atlas. Preparing a value alone
 //! does not enlarge these limits or draw anything.
 
+mod atlas_limits;
 mod error;
+pub use atlas_limits::{TextAtlasLimits, TextRunLimits};
 mod font;
 mod session;
 mod settings;

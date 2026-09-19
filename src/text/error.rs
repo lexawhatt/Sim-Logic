@@ -12,6 +12,10 @@ use crate::screen::ScreenVisualError;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum TextError {
+    /// Invalid atlas dimensions/cache count or run count/byte limits.
+    InvalidAtlasLimits,
+    /// A style was requested from a font registered by another application.
+    ForeignFont,
     /// Engine rejected trusted font bytes, single-line input, or font geometry.
     Font(FontError),
     /// Prepared shaping state belongs to a different font/style or exceeds limits.
@@ -58,6 +62,8 @@ pub enum TextError {
 impl fmt::Display for TextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidAtlasLimits => formatter.write_str("invalid text atlas/run limits"),
+            Self::ForeignFont => formatter.write_str("font is not registered by this application"),
             Self::Font(error) => write!(formatter, "text font: {error}"),
             Self::Prepared(error) => write!(formatter, "text preparation: {error}"),
             Self::FontLimitExceeded { limit } => {

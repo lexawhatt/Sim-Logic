@@ -21,6 +21,19 @@ region, Enter opens an alternate World, and Escape exits. Both Worlds use the
 same registered pixels. The [example source](../../examples/image_board/game.rs)
 is also exercised by [headless acceptance tests](../../tests/screen_images/example.rs).
 
+## Rotation and clipping
+
+`set_rotation(radians)` rotates clockwise about the destination rectangle's
+center. Position and size always describe the unrotated rectangle; angles are
+reduced to `0..TAU`. This uses Engine's existing per-draw camera transform:
+source pixels are not recreated, and the World camera remains untouched.
+
+`set_clip(ScreenClip)` clips in fixed logical screen pixels, independently of
+rotation or movement. `contains_pointer` inverse-transforms the point and tests
+the destination rectangle plus clip; transparent texels do not change hit
+geometry. Eligibility and painter-order routing remain caller decisions.
+The [interface lab](../../examples/interface_lab/main.rs) exercises this path.
+
 ## A complete headless image
 
 Screen-image extraction is disabled by default. Enable its source count and

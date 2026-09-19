@@ -111,130 +111,10 @@ impl<A: Action> DigitalAxis2d<A> {
     }
 }
 
-/// A portable physical keyboard key supported by the runtime.
-///
-/// Desktop adapters translate platform key codes into this enum before input
-/// reaches the headless runtime core.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PhysicalKeyCode {
-    /// The physical W key.
-    KeyW,
-    /// The physical A key.
-    KeyA,
-    /// The physical S key.
-    KeyS,
-    /// The physical D key.
-    KeyD,
-    /// The main Enter key.
-    Enter,
-    /// The physical Space key.
-    Space,
-    /// The physical left-arrow key.
-    ArrowLeft,
-    /// The physical right-arrow key.
-    ArrowRight,
-    /// The physical down-arrow key.
-    ArrowDown,
-    /// The physical up-arrow key.
-    ArrowUp,
-    /// The physical Escape key.
-    Escape,
-    /// The physical P key.
-    KeyP,
-    /// The physical R key.
-    KeyR,
-    /// The physical N key.
-    KeyN,
-    /// The physical 1 key on the number row, not the numeric keypad.
-    Digit1,
-    /// The physical 2 key on the number row, not the numeric keypad.
-    Digit2,
-    /// The physical 3 key on the number row, not the numeric keypad.
-    Digit3,
-    /// The physical 4 key on the number row, not the numeric keypad.
-    Digit4,
-    /// The physical 5 key on the number row, not the numeric keypad.
-    Digit5,
-    /// The physical F3 function key.
-    F3,
-    /// The physical F4 function key.
-    F4,
-    /// The physical F5 function key.
-    F5,
-    /// The physical F6 function key.
-    F6,
-    /// The physical F8 function key.
-    F8,
-    /// The physical F9 function key.
-    F9,
-    /// The physical L key.
-    KeyL,
-    /// The physical F key.
-    KeyF,
-    /// The physical M key.
-    KeyM,
-    /// The physical T key.
-    KeyT,
-    /// The physical V key.
-    KeyV,
-    /// The physical 6 key on the number row.
-    Digit6,
-    /// The physical 7 key on the number row.
-    Digit7,
-    /// The physical 8 key on the number row.
-    Digit8,
-    /// The physical 9 key on the number row.
-    Digit9,
-    /// The physical F7 function key.
-    F7,
-    /// The physical E key.
-    KeyE,
-    /// The physical left Shift key.
-    ShiftLeft,
-}
-
-pub(crate) const ALL_PHYSICAL_KEYS: [PhysicalKeyCode; 37] = [
-    PhysicalKeyCode::KeyW,
-    PhysicalKeyCode::KeyA,
-    PhysicalKeyCode::KeyS,
-    PhysicalKeyCode::KeyD,
-    PhysicalKeyCode::Enter,
-    PhysicalKeyCode::Space,
-    PhysicalKeyCode::ArrowLeft,
-    PhysicalKeyCode::ArrowRight,
-    PhysicalKeyCode::ArrowDown,
-    PhysicalKeyCode::ArrowUp,
-    PhysicalKeyCode::Escape,
-    PhysicalKeyCode::KeyP,
-    PhysicalKeyCode::KeyR,
-    PhysicalKeyCode::KeyN,
-    PhysicalKeyCode::Digit1,
-    PhysicalKeyCode::Digit2,
-    PhysicalKeyCode::Digit3,
-    PhysicalKeyCode::Digit4,
-    PhysicalKeyCode::Digit5,
-    PhysicalKeyCode::F3,
-    PhysicalKeyCode::F4,
-    PhysicalKeyCode::F5,
-    PhysicalKeyCode::F6,
-    PhysicalKeyCode::F8,
-    PhysicalKeyCode::F9,
-    PhysicalKeyCode::KeyL,
-    PhysicalKeyCode::KeyF,
-    PhysicalKeyCode::KeyM,
-    PhysicalKeyCode::KeyT,
-    PhysicalKeyCode::KeyV,
-    PhysicalKeyCode::Digit6,
-    PhysicalKeyCode::Digit7,
-    PhysicalKeyCode::Digit8,
-    PhysicalKeyCode::Digit9,
-    PhysicalKeyCode::F7,
-    PhysicalKeyCode::KeyE,
-    PhysicalKeyCode::ShiftLeft,
-];
-
-pub(crate) const SUPPORTED_PHYSICAL_KEY_COUNT: usize = ALL_PHYSICAL_KEYS.len();
+#[path = "input/keyboard.rs"]
+mod keyboard;
+pub use keyboard::PhysicalKeyCode;
+pub(crate) use keyboard::{ALL_PHYSICAL_KEYS, SUPPORTED_PHYSICAL_KEY_COUNT, physical_key_index};
 
 /// The state carried by a physical button event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1356,48 +1236,6 @@ fn sample_digital_axis<A: Action>(axis: DigitalAxis2d<A>, mut held: impl FnMut(A
     Vec2::new(x, y)
 }
 
-pub(crate) const fn physical_key_index(key: PhysicalKeyCode) -> usize {
-    match key {
-        PhysicalKeyCode::KeyW => 0,
-        PhysicalKeyCode::KeyA => 1,
-        PhysicalKeyCode::KeyS => 2,
-        PhysicalKeyCode::KeyD => 3,
-        PhysicalKeyCode::Enter => 4,
-        PhysicalKeyCode::Space => 5,
-        PhysicalKeyCode::ArrowLeft => 6,
-        PhysicalKeyCode::ArrowRight => 7,
-        PhysicalKeyCode::ArrowDown => 8,
-        PhysicalKeyCode::ArrowUp => 9,
-        PhysicalKeyCode::Escape => 10,
-        PhysicalKeyCode::KeyP => 11,
-        PhysicalKeyCode::KeyR => 12,
-        PhysicalKeyCode::KeyN => 13,
-        PhysicalKeyCode::Digit1 => 14,
-        PhysicalKeyCode::Digit2 => 15,
-        PhysicalKeyCode::Digit3 => 16,
-        PhysicalKeyCode::Digit4 => 17,
-        PhysicalKeyCode::Digit5 => 18,
-        PhysicalKeyCode::F3 => 19,
-        PhysicalKeyCode::F4 => 20,
-        PhysicalKeyCode::F5 => 21,
-        PhysicalKeyCode::F6 => 22,
-        PhysicalKeyCode::F8 => 23,
-        PhysicalKeyCode::F9 => 24,
-        PhysicalKeyCode::KeyL => 25,
-        PhysicalKeyCode::KeyF => 26,
-        PhysicalKeyCode::KeyM => 27,
-        PhysicalKeyCode::KeyT => 28,
-        PhysicalKeyCode::KeyV => 29,
-        PhysicalKeyCode::Digit6 => 30,
-        PhysicalKeyCode::Digit7 => 31,
-        PhysicalKeyCode::Digit8 => 32,
-        PhysicalKeyCode::Digit9 => 33,
-        PhysicalKeyCode::F7 => 34,
-        PhysicalKeyCode::KeyE => 35,
-        PhysicalKeyCode::ShiftLeft => 36,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1477,7 +1315,7 @@ mod tests {
 
     #[test]
     fn physical_key_catalog_is_unique_and_round_trips_every_index() {
-        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 37);
+        assert_eq!(SUPPORTED_PHYSICAL_KEY_COUNT, 108);
         let mut unique = HashSet::new();
 
         for (index, key) in ALL_PHYSICAL_KEYS.into_iter().enumerate() {

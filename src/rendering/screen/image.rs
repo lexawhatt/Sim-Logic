@@ -112,6 +112,7 @@ impl ImageRegion {
 /// or hit testing is implied by visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Component)]
 pub struct ScreenImageVisual {
+    rotation: f32,
     image: ImageAssetId,
     source_region: Option<ImageRegion>,
     filter: ImageFilter,
@@ -119,6 +120,50 @@ pub struct ScreenImageVisual {
 }
 
 impl ScreenImageVisual {
+    /// Returns clockwise radians about the destination rectangle's center.
+    /// The top-left position and size describe the unrotated rectangle.
+    pub const fn rotation(&self) -> f32 {
+        self.rotation
+    }
+
+    /// Sets clockwise center rotation, reducing finite angles to `0..TAU`.
+    /// No image pixels are recreated. Failure leaves the visual unchanged.
+    pub fn set_rotation(&mut self, radians: f32) -> Result<(), ImageVisualError> {
+        if !radians.is_finite() {
+            return Err(ScreenVisualError::InvalidRotation { value: radians }.into());
+        }
+        self.rotation = radians.rem_euclid(std::f32::consts::TAU);
+        Ok(())
+    }
+
+    /// Tests the rotated destination and fixed clip, not individual texel alpha.
+    /// The caller still selects eligibility and resolves overlapping targets.
+    pub fn contains_pointer(&self, sample: crate::input::PointerSample) -> bool {
+        if !self.clip().contains_pointer(sample) {
+            return false;
+        }
+        let size = self.size().to_vec2();
+        let min = self.position().to_vec2();
+        let p = sample.position().to_vec2();
+        let x = f64::from(p.x()) - (f64::from(min.x()) + f64::from(size.x()) * 0.5);
+        let y = f64::from(p.y()) - (f64::from(min.y()) + f64::from(size.y()) * 0.5);
+        let (sin, cos) = f64::from(self.rotation).sin_cos();
+        let local_x = x * cos + y * sin + f64::from(size.x()) * 0.5;
+        let local_y = -x * sin + y * cos + f64::from(size.y()) * 0.5;
+        local_x >= 0.0
+            && local_y >= 0.0
+            && local_x < f64::from(size.x())
+            && local_y < f64::from(size.y())
+    }
+    /// Returns the fixed-screen clip; content placement does not move it.
+    pub const fn clip(&self) -> super::ScreenClip {
+        self.rectangle.clip()
+    }
+
+    /// Replaces the screen clip, independent of source texels and destination.
+    pub fn set_clip(&mut self, clip: super::ScreenClip) {
+        self.rectangle.set_clip(clip);
+    }
     /// Places the full image with white tint and nearest-texel sampling.
     ///
     /// The default layer and depth zero match screen rectangles. Position must
@@ -130,6 +175,7 @@ impl ScreenImageVisual {
         size: LogicalScreenVector,
     ) -> Result<Self, ImageVisualError> {
         Ok(Self {
+            rotation: 0.0,
             image,
             source_region: None,
             filter: ImageFilter::Nearest,

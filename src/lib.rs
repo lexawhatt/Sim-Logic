@@ -58,7 +58,7 @@ pub mod resources;
 pub mod screen;
 #[path = "ecs/system.rs"]
 pub mod system;
-#[cfg(feature = "text")]
+#[cfg(feature = "headless-text")]
 pub mod text;
 #[path = "rendering/three_d/mod.rs"]
 pub mod three_d;
@@ -69,6 +69,8 @@ pub mod transition;
 pub mod ui;
 #[path = "rendering/visual.rs"]
 pub mod visual;
+#[path = "application/window.rs"]
+pub mod window;
 #[path = "ecs/world.rs"]
 pub mod world;
 
@@ -81,11 +83,11 @@ pub use bevy_ecs;
 pub use component::{ComponentApprovalError, ComponentTuple, LifecycleHook};
 #[cfg(feature = "easter-eggs")]
 pub use easter_eggs::{CrabDrawError, draw_crab};
-#[cfg(feature = "text")]
+#[cfg(feature = "headless-text")]
 pub use extraction::ResolvedScreenText;
 pub use extraction::{
     ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
-    ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,
+    ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
 };
 
 /// Convenience result for application code and fallible Systems that combine
@@ -118,7 +120,7 @@ pub mod prelude {
 
     pub use crate::ComponentTuple;
     pub use crate::LogicResult;
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub use crate::ResolvedScreenText;
     pub use crate::app::{AppConfig, Application};
     pub use crate::assets::{ImageAsset, ImageAssetError, ImageAssetId, ImageAssetLimits};
@@ -157,14 +159,14 @@ pub mod prelude {
     pub use crate::render::{FrameLimits, FrameViewport, RenderLimits};
     pub use crate::resources::{AppRes, AppResMut, ApplicationResourceError};
     pub use crate::screen::{
-        ImageFilter, ImageRegion, ImageVisualError, ScreenImageVisual, ScreenRectangleVisual,
-        ScreenVisualError,
+        ImageFilter, ImageRegion, ImageVisualError, ScreenCircleVisual, ScreenClip,
+        ScreenImageVisual, ScreenLineVisual, ScreenRectangleVisual, ScreenVisualError,
     };
     pub use crate::system::{Stage, SystemRunFailure, SystemSetupError};
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub use crate::text::{
-        ScreenTextVisual, TextAlignment, TextError, TextFont, TextLimits, TextMetrics,
-        TextPreparationSession, TextSettings,
+        ScreenTextVisual, TextAlignment, TextAtlasLimits, TextError, TextFont, TextLimits,
+        TextMetrics, TextPreparationSession, TextRunLimits, TextSettings,
     };
     pub use crate::three_d::{
         CuboidVisual3d, CuboidVisualError, MeshAsset3d, MeshVisual3d, MeshVisualError,
@@ -175,17 +177,22 @@ pub mod prelude {
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;
     pub use crate::ui::{
-        PointerButton, PointerButtonCancellation, PointerButtonEvent, PointerButtonOutcome,
+        FocusCommand, FocusError, FocusOutcome, KeyboardFocus, PointerButton,
+        PointerButtonCancellation, PointerButtonEvent, PointerButtonOutcome,
     };
     pub use crate::visual::{
         ActiveCamera2d, CircleVisual, LineVisual, RectangleVisual, Transform2d, VisualValueError,
         WorldBackground,
+    };
+    pub use crate::window::{
+        CursorShape, FullscreenMonitor, WindowControls, WindowMode, WindowModeFailure,
+        WindowModeStatus,
     };
     pub use crate::world::{WorldBuildError, WorldBuilder};
     #[cfg(feature = "easter-eggs")]
     pub use crate::{CrabDrawError, draw_crab};
     pub use crate::{
         ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
-        ResolvedScreenImage, ResolvedScreenRectangle, ScreenDraw,
+        ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
     };
 }

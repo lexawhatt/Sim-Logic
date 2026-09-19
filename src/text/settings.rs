@@ -1,9 +1,12 @@
 use sim_engine::{
-    FontBudget, FontError, LogicalPixels, PhysicalPerLogical, TextAtlasBudget, TextDirection,
-    TextLayoutBudget, TextStyle,
+    FontBudget, FontError, LogicalPixels, PhysicalPerLogical, TextDirection, TextLayoutBudget,
+    TextStyle,
 };
 
+use super::TextAtlasLimits;
 use super::TextError;
+#[cfg(feature = "text")]
+use sim_engine::TextAtlasBudget;
 
 /// Frozen limits for application-owned font registrations.
 ///
@@ -60,6 +63,8 @@ pub struct TextSettings {
     direction: TextDirection,
     font_budget: FontBudget,
     layout_budget: TextLayoutBudget,
+    atlas_limits: TextAtlasLimits,
+    #[cfg(feature = "text")]
     atlas_budget: TextAtlasBudget,
 }
 
@@ -101,7 +106,9 @@ impl TextSettings {
     ///
     /// This stores an already validated configuration without allocating GPU
     /// resources. Device dimensions and raster fit are checked on desktop use.
+    #[cfg(feature = "text")]
     pub const fn with_atlas_budget(mut self, budget: TextAtlasBudget) -> Self {
+        self.atlas_limits = TextAtlasLimits::from_engine(budget);
         self.atlas_budget = budget;
         self
     }
@@ -127,8 +134,25 @@ impl TextSettings {
     }
 
     /// Returns the fixed physical atlas dimensions and per-run capacities.
+    #[cfg(feature = "text")]
     pub const fn atlas_budget(self) -> TextAtlasBudget {
         self.atlas_budget
+    }
+
+    /// Sets GPU-independent atlas/run configuration. Validation failure preserves self.
+    /// Available with both `headless-text` and `text`; desktop conversion is checked.
+    pub fn with_atlas_limits(mut self, limits: TextAtlasLimits) -> Result<Self, TextError> {
+        #[cfg(feature = "text")]
+        {
+            self.atlas_budget = limits.engine_budget()?;
+        }
+        self.atlas_limits = limits;
+        Ok(self)
+    }
+
+    /// Returns the GPU-independent atlas/run configuration used by CPU label validation.
+    pub const fn atlas_limits(self) -> TextAtlasLimits {
+        self.atlas_limits
     }
 
     /// Creates Engine's style for an explicit physical-pixels-per-logical scale.
@@ -156,6 +180,8 @@ impl Default for TextSettings {
             direction: TextDirection::Auto,
             font_budget: FontBudget::default(),
             layout_budget: TextLayoutBudget::new(4096, 1024, 1024 * 1024, 16 * 1024),
+            atlas_limits: TextAtlasLimits::default(),
+            #[cfg(feature = "text")]
             atlas_budget: TextAtlasBudget::default(),
         }
     }

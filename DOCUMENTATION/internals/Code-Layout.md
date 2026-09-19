@@ -96,7 +96,17 @@ The [text labels](../../examples/text_labels/scene.rs) use the same separation.
 `rendering/extraction/text.rs` checks their provenance and publishes snapshots.
 `platform/desktop/text.rs` owns Engine atlases and retained GPU runs. The mixed
 screen compositor in `platform/desktop/images.rs` orders text, images, and
-rectangles together. Shaping and rasterization remain Engine responsibilities.
+geometry runs together. `headless-text` compiles the CPU half without GPU/window
+dependencies; `text` adds the retained GPU path. Shaping and rasterization remain
+Engine responsibilities.
+
+The [interface lab](../../examples/interface_lab/main.rs) exercises the stock
+host's optional `application/window.rs` requests through
+`platform/desktop/window.rs`. Portable key catalogs and native mappings have
+their own `input/keyboard.rs` and `desktop/keyboard.rs` modules. Screen rounded
+rectangles, vectors and clip values live in `rendering/screen`; extraction
+batches them without introducing another renderer. `ui/focus.rs` is a standalone
+typed helper, not a second input dispatcher or a layout system.
 
 The optional [`draw_crab`](../rendering/Screen-Images.md#ferris-easter-egg) helper and its small embedded PNG
 live in `rendering/easter_eggs`. It registers a normal image during setup and

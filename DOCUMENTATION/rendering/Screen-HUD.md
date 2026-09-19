@@ -211,10 +211,91 @@ and clips on smaller windows. After replacement, inherited counter labels show
 `...` until the first following FrameUpdate: isolated factories cannot read
 live Application Resources. The counters themselves survive immediately.
 
+## Rounded cards, animated vectors, and clips
+
+`ScreenRectangleVisual::rounded(position, size, color, radius)` adds logical-pixel
+corners. Zero radius means square corners; large radii are clamped to half the
+shorter side when drawn. `set_corner_radius` and `set_stroke(Some(Stroke::new(
+width, color)))` change the shape without recreating an entity. Outlines are
+centered; pointer hits test the rounded fill, not the decorative outside stroke.
+
+`ScreenLineVisual::new(start, end, width, color)` and
+`ScreenCircleVisual::new(center, radius, color)` are screen-owned components.
+Change endpoints/center/radius directly in FrameUpdate. No `Transform2d`, fixed
+tick, or World camera is involved; animation continues during simulation pause.
+Lines have round caps. Circles also accept an optional outline.
+
+All screen visuals, including images and text, accept `set_clip(ScreenClip)`.
+Clips use the same top-left/downward logical pixels as hit testing. They stay
+fixed when content moves or images rotate. To nest scopes, explicitly intersect
+them and assign the result to their content:
+
+```rust
+use sim_logic::prelude::*;
+fn content_clip() -> LogicResult<ScreenClip> {
+    let panel = ScreenClip::new(
+        LogicalScreenPosition::new(20.0, 20.0), LogicalScreenVector::new(400.0, 300.0),
+    )?;
+    let scroll_area = ScreenClip::new(
+        LogicalScreenPosition::new(30.0, 70.0), LogicalScreenVector::new(380.0, 240.0),
+    )?;
+    Ok(panel.intersection(scroll_area))
+}
+```
+
+Disjoint scopes produce `ScreenClip::Empty`, never an accidental unclipped
+draw. Empty-clipped sources still count toward extraction limits. They emit no
+draw geometry; image/text preparation may still retain their bounded resources.
+There is no implicit clip tree or parent traversal. Recompute the assigned clip
+when your layout changes. Pointer helpers respect each visual's explicit clip;
+text metrics remain typographic metrics, not a widget hit box.
+
+Contiguous rectangles, lines and circles form one geometry run; images and
+labels split it only where painter order requires it. Exhaustive `ScreenDraw`
+matches need the new `Primitives` variant. Inspect either geometry-run variant
+with `screen_primitive_run_records(run)`; the old rectangle accessor returns
+only its rectangles. Source limits and the shared screen `SceneBudget` both
+apply: a 1,000-line decoration needs an explicitly larger line count and scene
+command/vertex/byte budget, not 1,000 separate desktop draw calls by design.
+
+Set `RenderLimits::with_max_screen_lines` / `with_max_screen_circles` for large
+decorative scenes (each defaults to 256). Rectangles, lines, and circles also
+share `with_screen_scene_budget`; rounded/stroked shapes need more vertices
+than square fills. Images/text split contiguous geometry runs, not one draw
+per vector. `screen_primitives()` exposes the sorted sampled geometry.
+`ScreenDraw::Primitives` is the new mixed-vector run variant; rectangle-only
+applications retain the existing `Rectangles` variant. Same-source ties draw
+rectangle, line, circle, image, then text. All remain above World content.
+
+## Keyboard focus
+
+`KeyboardFocus<Target, Scope>::new(max_targets)` is an optional, allocation-free
+controller. Supply the active modal scope and an ordered slice of unique,
+eligible target IDs to `process(scope, eligible, FocusCommand::Next)` (or
+Previous/First/Last/Activate/Clear). Activation is returned in `FocusOutcome`;
+the helper never invokes a widget or reads/consumes input on its own.
+
+Omit disabled/hidden targets. A new scope or removed target clears old focus;
+Activate does not silently select a replacement. `set_focused` handles pointer
+selection. Invalid/duplicate/over-limit orders preserve previous state. Call
+`synchronize` after eligibility changes even when no navigation occurred.
+Use generation-qualified IDs or recreate the helper on World replacement.
+
+Run the combined proving UI:
+
+```bash
+cargo run --release --features text --example interface_lab
+```
+
+It exercises rounded cards, outlines, vector animation during pause, clips,
+rotating images, shared-font sizes, pointer/keyboard activation, native hover
+cursors, and F11. `-- --frames 180 --exercise-window` performs a bounded run
+and checks actual presented-frame counts; it is not a pixel or FPS oracle.
+
 ## What this does not provide
 
-There are no rounded screen rectangles, automatic widget layouts, keyboard
-focus navigation, text editing, OS pointer grabs, or clipping trees here.
+There is no automatic widget layout, text editing, or implicit clipping tree.
+Native pointer capture is a separate optional [input service](../guides/Pointer-Input.md).
 [Optional font-backed labels](Text.md) are a separate drawing capability.
 The button helper owns a local press/release sequence, not drag-motion sampling
 or automatic global input routing. Drawing a rectangle alone does not make it

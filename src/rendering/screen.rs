@@ -10,8 +10,16 @@ use crate::input::PointerSample;
 #[path = "screen/image.rs"]
 mod image;
 pub use image::{ImageFilter, ImageRegion, ImageVisualError, ScreenImageVisual};
+#[path = "screen/clip.rs"]
+mod clip;
+#[path = "screen/rectangle.rs"]
+mod rectangle;
+pub use clip::ScreenClip;
+#[path = "screen/vectors.rs"]
+mod vectors;
+pub use vectors::{ScreenCircleVisual, ScreenLineVisual};
 
-/// A filled, square-cornered rectangle positioned in logical screen pixels.
+/// A filled rectangle with optional rounded corners and a decorative outline.
 ///
 /// The origin is the content area's top-left, with x increasing rightward and
 /// y downward. Finite negative and offscreen positions are allowed. World
@@ -32,6 +40,9 @@ pub struct ScreenRectangleVisual {
     color: Color,
     layer: Layer,
     draw_order_depth: f32,
+    corner_radius: f32,
+    stroke: Option<sim_engine::Stroke>,
+    clip: ScreenClip,
 }
 
 impl ScreenRectangleVisual {
@@ -51,6 +62,9 @@ impl ScreenRectangleVisual {
             color,
             layer: Layer::DEFAULT,
             draw_order_depth: 0.0,
+            corner_radius: 0.0,
+            stroke: None,
+            clip: ScreenClip::Unclipped,
         };
         visual.validate()?;
         Ok(visual)
@@ -74,19 +88,31 @@ impl ScreenRectangleVisual {
     /// is current; this does not reconstruct historical layout after a resize.
     ///
     /// This is allocation-free geometry, not automatic UI routing. Alpha, entity
-    /// enablement, overlapping draw order and nested clipping are not inspected.
+    /// enablement and overlapping draw order are not inspected. The configured
+    /// clip and rounded fill are respected; the decorative outline is excluded.
     /// The caller chooses eligibility and which overlapping target wins.
     pub fn contains_pointer(&self, sample: PointerSample) -> bool {
-        if !sample.is_inside_viewport() {
+        if !self.clip.contains_pointer(sample) {
             return false;
         }
         let point = sample.position().to_vec2();
         let minimum = self.position.to_vec2();
         let maximum = minimum + self.size.to_vec2();
-        point.x() >= minimum.x()
+        let inside = point.x() >= minimum.x()
             && point.y() >= minimum.y()
             && point.x() < maximum.x()
-            && point.y() < maximum.y()
+            && point.y() < maximum.y();
+        if !inside {
+            return false;
+        }
+        let radius = f64::from(self.corner_radius)
+            .min(f64::from(self.size.to_vec2().x()) * 0.5)
+            .min(f64::from(self.size.to_vec2().y()) * 0.5);
+        let x = f64::from(point.x()) - f64::from(minimum.x());
+        let y = f64::from(point.y()) - f64::from(minimum.y());
+        let dx = (x - x.clamp(radius, f64::from(self.size.to_vec2().x()) - radius)).abs();
+        let dy = (y - y.clamp(radius, f64::from(self.size.to_vec2().y()) - radius)).abs();
+        dx.hypot(dy) <= radius
     }
 
     /// Returns the normalized straight-linear RGBA fill color.
@@ -172,6 +198,23 @@ impl ScreenRectangleVisual {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ScreenVisualError {
+    /// Image rotation was non-finite.
+    InvalidRotation {
+        /// Rejected clockwise angle in radians.
+        value: f32,
+    },
+    /// Line endpoints coincide or their difference overflows.
+    InvalidLine,
+    /// A radius was negative or non-finite (circles additionally reject zero).
+    InvalidRadius {
+        /// Rejected radius in logical pixels.
+        value: f32,
+    },
+    /// A stroke width was non-finite or not positive.
+    InvalidStrokeWidth {
+        /// Rejected width in logical pixels.
+        value: f32,
+    },
     /// A logical screen position contained a non-finite coordinate.
     InvalidPosition {
         /// Rejected logical top-left position.
@@ -204,6 +247,15 @@ pub enum ScreenVisualError {
 impl fmt::Display for ScreenVisualError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRotation { value } => {
+                write!(formatter, "non-finite screen rotation: {value}")
+            }
+            Self::InvalidLine => formatter
+                .write_str("screen line endpoints must be distinct with finite displacement"),
+            Self::InvalidRadius { value } => write!(formatter, "invalid screen radius: {value}"),
+            Self::InvalidStrokeWidth { value } => {
+                write!(formatter, "invalid screen stroke width: {value}")
+            }
             Self::InvalidPosition { value } => {
                 write!(
                     formatter,

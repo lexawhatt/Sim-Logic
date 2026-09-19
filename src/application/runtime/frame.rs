@@ -263,7 +263,7 @@ impl<A: Action> HeadlessRunner<A> {
                     self.config.render(),
                     &mut self.extraction,
                     &self.images,
-                    #[cfg(feature = "text")]
+                    #[cfg(feature = "headless-text")]
                     &self.texts,
                 ) {
                     Ok(()) => {

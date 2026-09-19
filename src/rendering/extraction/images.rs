@@ -21,6 +21,14 @@ pub struct ResolvedScreenImage {
 }
 
 impl ResolvedScreenImage {
+    /// Returns clockwise center rotation in radians, independent of the World camera.
+    pub const fn rotation(self) -> f32 {
+        self.visual.rotation()
+    }
+    /// Returns the sampled fixed-screen clip, including an explicit empty scope.
+    pub const fn clip(self) -> crate::screen::ScreenClip {
+        self.visual.clip()
+    }
     /// Returns the managed entity that produced this image.
     pub const fn source(self) -> LogicEntity {
         self.source

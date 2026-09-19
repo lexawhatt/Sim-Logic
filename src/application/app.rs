@@ -62,7 +62,7 @@ pub struct AppConfig {
     application_resource_limit: usize,
     render: RenderLimits,
     images: ImageAssetLimits,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     text: crate::text::TextLimits,
 }
 
@@ -78,7 +78,7 @@ impl Default for AppConfig {
             application_resource_limit: DEFAULT_APPLICATION_RESOURCE_LIMIT,
             render: RenderLimits::default(),
             images: ImageAssetLimits::default(),
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             text: crate::text::TextLimits::default(),
         }
     }
@@ -185,9 +185,10 @@ impl AppConfig {
 
     /// Replaces setup-time font count and retained font-byte limits.
     ///
-    /// Does not raise render limits or initialize a window/device. The optional
-    /// `text` feature includes Engine's GPU dependencies even for headless use.
-    #[cfg(feature = "text")]
+    /// Does not raise render limits or initialize a window/device. Use
+    /// `headless-text` without defaults to exclude GPU/window dependencies;
+    /// `text` additionally compiles Engine's retained GPU text bridge.
+    #[cfg(feature = "headless-text")]
     pub fn set_text_limits(&mut self, limits: crate::text::TextLimits) -> &mut Self {
         self.text = limits;
         self
@@ -342,7 +343,7 @@ pub struct Application<A: Action> {
     pub(crate) events: EventRegistry,
     pub(crate) application_resources: ApplicationResourceRegistry,
     pub(crate) images: ImageAssetRegistry,
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub(crate) texts: crate::text::TextRegistry,
     #[cfg(feature = "easter-eggs")]
     pub(crate) crab_image: Option<ImageAssetId>,
@@ -379,9 +380,15 @@ impl<A: Action> Application<A> {
             .approve::<ScreenRectangleVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
+            .approve::<crate::screen::ScreenLineVisual>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
+        components
+            .approve::<crate::screen::ScreenCircleVisual>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
+        components
             .approve::<ScreenImageVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
-        #[cfg(feature = "text")]
+        #[cfg(feature = "headless-text")]
         components
             .approve::<crate::text::ScreenTextVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
@@ -420,7 +427,7 @@ impl<A: Action> Application<A> {
             events: EventRegistry::default(),
             application_resources: ApplicationResourceRegistry::default(),
             images: ImageAssetRegistry::new(application, config.images),
-            #[cfg(feature = "text")]
+            #[cfg(feature = "headless-text")]
             texts: crate::text::TextRegistry::new(application, config.text),
             #[cfg(feature = "easter-eggs")]
             crab_image: None,
@@ -462,13 +469,29 @@ impl<A: Action> Application<A> {
     /// equal registrations remain distinct. Clones share font storage and the
     /// handle survives World replacement. No window, GPU call, font discovery,
     /// or download occurs. The caller supplies licensed, trusted font bytes.
-    #[cfg(feature = "text")]
+    #[cfg(feature = "headless-text")]
     pub fn register_font(
         &mut self,
         bytes: Vec<u8>,
         settings: crate::text::TextSettings,
     ) -> Result<crate::text::TextFont, crate::text::TextError> {
         self.texts.register(bytes, settings)
+    }
+
+    /// Registers another size/direction/layout configuration sharing an existing
+    /// font's parsed face and source bytes. No file copy, reparse, or GPU work occurs.
+    ///
+    /// The source must belong to this application. The new style has its own
+    /// registration/atlas identity, consumes one font-count slot, and charges zero
+    /// additional source bytes. Per-style atlas/run budgets remain independent.
+    /// Failure preserves the registry. A source style can also share its face onward.
+    #[cfg(feature = "headless-text")]
+    pub fn register_font_style(
+        &mut self,
+        source: &crate::text::TextFont,
+        settings: crate::text::TextSettings,
+    ) -> Result<crate::text::TextFont, crate::text::TextError> {
+        self.texts.register_style(source, settings)
     }
 
     /// Approves a flat tuple of one through fifteen hook-free component types.

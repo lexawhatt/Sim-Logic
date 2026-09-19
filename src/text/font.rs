@@ -27,16 +27,23 @@ pub struct TextFont {
 #[derive(Debug)]
 struct FontData {
     face: FontFace,
+    face_slot: usize,
     settings: TextSettings,
 }
 
 impl TextFont {
+    /// Reports shared parsed face/source storage, independent of size/style identity.
+    /// Equal file contents loaded separately are not treated as shared storage.
+    pub fn shares_face_with(&self, other: &Self) -> bool {
+        self.application == other.application && self.data.face_slot == other.data.face_slot
+    }
     /// Returns immutable logical size, shaping policy, and preparation budgets.
     pub fn settings(&self) -> TextSettings {
         self.data.settings
     }
 
-    /// Returns shared source-font Vec capacity in bytes, counted once per registration.
+    /// Returns the referenced source-font Vec capacity in bytes. Shared styles
+    /// report the same source; application accounting charges that source once.
     /// Parsed dependency metadata and allocator overhead are excluded.
     pub fn font_bytes(&self) -> usize {
         self.data.face.allocation_bytes()
@@ -55,7 +62,7 @@ impl TextFont {
         &self.data.face
     }
 
-    #[cfg(any(feature = "desktop", test))]
+    #[cfg(any(all(feature = "desktop", feature = "text"), test))]
     pub(crate) const fn slot(&self) -> usize {
         self.slot
     }
@@ -132,10 +139,68 @@ impl TextRegistry {
         let font = TextFont {
             application: self.application,
             slot: self.fonts.len(),
-            data: Arc::new(FontData { face, settings }),
+            data: Arc::new(FontData {
+                face,
+                settings,
+                face_slot: self.fonts.len(),
+            }),
         };
         self.font_bytes += incoming;
         self.fonts.push(font.clone());
+        Ok(font)
+    }
+
+    pub(crate) fn register_style(
+        &mut self,
+        source: &TextFont,
+        settings: TextSettings,
+    ) -> Result<TextFont, TextError> {
+        if !self.contains(source) {
+            return Err(TextError::ForeignFont);
+        }
+        settings.style(1.0)?;
+        if self.fonts.len() >= self.limits.max_fonts() {
+            return Err(TextError::FontLimitExceeded {
+                limit: self.limits.max_fonts(),
+            });
+        }
+        let face = source.face();
+        for (resource, requested, limit) in [
+            (
+                sim_engine::FontBudgetResource::FontBytes,
+                face.allocation_bytes(),
+                settings.font_budget().max_font_bytes(),
+            ),
+            (
+                sim_engine::FontBudgetResource::FontGlyphs,
+                face.glyph_count(),
+                settings.font_budget().max_font_glyphs(),
+            ),
+        ] {
+            if requested > limit {
+                return Err(sim_engine::FontError::BudgetExceeded {
+                    resource,
+                    required: requested,
+                    limit,
+                }
+                .into());
+            }
+        }
+        self.fonts
+            .try_reserve_exact(1)
+            .map_err(|source| TextError::AllocationFailed { source })?;
+        let font = TextFont {
+            application: self.application,
+            slot: self.fonts.len(),
+            data: Arc::new(FontData {
+                face: face.clone(),
+                settings,
+                face_slot: source.data.face_slot,
+            }),
+        };
+        self.fonts.push(font.clone());
+        // Engine's FontFace clone shares its parsed face and original byte Vec.
+        // Charge neither source bytes nor parsing a second time; atlases remain per style.
         Ok(font)
     }
 

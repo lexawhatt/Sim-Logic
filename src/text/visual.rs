@@ -1,7 +1,8 @@
 use std::{fmt, sync::Arc};
 
+use super::TextRunLimits;
 use bevy_ecs::prelude::Component;
-use sim_engine::{Color, GlyphRunBudget, Layer, LogicalScreenPosition, ShapedLine};
+use sim_engine::{Color, Layer, LogicalScreenPosition, ShapedLine};
 
 use crate::screen::ScreenVisualError;
 
@@ -99,10 +100,10 @@ impl PreparedText {
             &settings.layout_budget(),
         )?;
         let metrics = TextMetrics::from_line(&line);
-        let run_budget = settings.atlas_budget().run_budget();
+        let run_budget = settings.atlas_limits().run_budget();
         let required = metrics
             .glyph_count
-            .checked_mul(GlyphRunBudget::RETAINED_BYTES_PER_GLYPH);
+            .checked_mul(TextRunLimits::RETAINED_BYTES_PER_GLYPH);
         if metrics.glyph_count > run_budget.max_glyphs()
             || required.is_none_or(|bytes| bytes > run_budget.max_retained_bytes())
         {
@@ -189,9 +190,19 @@ pub struct ScreenTextVisual {
     tint: Color,
     layer: Layer,
     draw_order_depth: f32,
+    clip: crate::screen::ScreenClip,
 }
 
 impl ScreenTextVisual {
+    /// Returns the fixed-screen clip; label placement and alignment do not move it.
+    pub const fn clip(&self) -> crate::screen::ScreenClip {
+        self.clip
+    }
+
+    /// Replaces the explicit clip without reshaping or changing typographic metrics.
+    pub fn set_clip(&mut self, clip: crate::screen::ScreenClip) {
+        self.clip = clip;
+    }
     /// Prepares a left-aligned white label on the default layer at depth zero.
     ///
     /// Position is a finite logical-pixel baseline anchor. Negative/offscreen
@@ -238,6 +249,7 @@ impl ScreenTextVisual {
             tint: Color::WHITE,
             layer: Layer::DEFAULT,
             draw_order_depth: 0.0,
+            clip: crate::screen::ScreenClip::Unclipped,
         };
         result.validate()?;
         Ok(result)
