@@ -13,6 +13,10 @@ sim-logic = { path = "../../..", default-features = false }
 name = "public_budget"
 path = "../../public_scene_budgets.rs"
 
+[[test]]
+name = "public_paths"
+path = "../../screen_paths.rs"
+
 [profile.dev]
 debug = "line-tables-only"
 incremental = false

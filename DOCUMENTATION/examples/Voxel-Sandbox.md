@@ -16,7 +16,7 @@ is embedded; there are no downloaded game assets. Sound is not enabled.
 
 ## Renderer limitation
 
-This prototype pins the official Engine `0.4.1` release from crates.io and
+This prototype pins the official Engine `0.4.2` release from crates.io and
 explicitly selects `ThreeDSurfacePolicy::Native` for the free camera. The
 library's default remains StrictPortable. No camera-coordinate workaround or
 second renderer is used.

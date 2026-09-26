@@ -33,11 +33,11 @@ mod primitives;
 pub use primitives::ResolvedScreenPrimitive;
 
 #[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "headless-text"), derive(Copy))]
 pub(crate) enum ScreenSource {
     Rectangle(ScreenRectangleSource),
     Line(LogicEntity, crate::screen::ScreenLineVisual),
     Circle(LogicEntity, crate::screen::ScreenCircleVisual),
+    Polyline(LogicEntity, crate::screen::ScreenPolylineVisual),
     Image(ScreenImageSource),
     #[cfg(feature = "headless-text")]
     Text(ScreenTextSource),
@@ -159,7 +159,7 @@ impl ScreenExtractionBuffer {
                 .copied()
                 .map(ResolvedScreenPrimitive::Rectangle)
         } else {
-            self.primitives.get(index).copied()
+            self.primitives.get(index).cloned()
         }
     }
 
@@ -257,6 +257,8 @@ impl ScreenExtractionBuffer {
         debug_assert_eq!(self.scene.budget(), Some(limits.screen_scene_budget()));
         let mut line_count = 0usize;
         let mut circle_count = 0usize;
+        let mut path_count = 0usize;
+        let mut path_points = 0usize;
         #[cfg(feature = "headless-text")]
         let mut text_bytes = 0usize;
         #[cfg(feature = "headless-text")]
@@ -264,6 +266,41 @@ impl ScreenExtractionBuffer {
         for source in sources {
             let source = match source {
                 ScreenSource::Rectangle(source) => source,
+                ScreenSource::Polyline(entity, visual) => {
+                    if entity.world_generation() != generation {
+                        return Err(ExtractionError::ForeignEntity {
+                            entity,
+                            expected: generation,
+                        });
+                    }
+                    path_count += 1;
+                    path_points = path_points.checked_add(visual.points().len()).ok_or(
+                        ExtractionError::ScreenPolylinePointsLimitExceeded {
+                            entity,
+                            limit: limits.max_screen_polyline_points(),
+                            requested: usize::MAX,
+                        },
+                    )?;
+                    if path_points > limits.max_screen_polyline_points() {
+                        return Err(ExtractionError::ScreenPolylinePointsLimitExceeded {
+                            entity,
+                            limit: limits.max_screen_polyline_points(),
+                            requested: path_points,
+                        });
+                    }
+                    self.push_vector(
+                        generation,
+                        entity,
+                        ResolvedScreenPrimitive::Polyline {
+                            source: entity,
+                            visual,
+                        },
+                        path_count,
+                        limits.max_screen_polylines(),
+                        limits.screen_scene_budget().max_commands(),
+                    )?;
+                    continue;
+                }
                 ScreenSource::Line(entity, visual) => {
                     line_count += 1;
                     self.push_vector(

@@ -386,6 +386,9 @@ impl<A: Action> Application<A> {
             .approve::<crate::screen::ScreenCircleVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         components
+            .approve::<crate::screen::ScreenPolylineVisual>()
+            .map_err(ApplicationCreationError::StandardComponent)?;
+        components
             .approve::<ScreenImageVisual>()
             .map_err(ApplicationCreationError::StandardComponent)?;
         #[cfg(feature = "headless-text")]

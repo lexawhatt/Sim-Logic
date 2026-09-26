@@ -308,7 +308,7 @@ There is no implicit clip tree or parent traversal. Recompute the assigned clip
 when your layout changes. Pointer helpers respect each visual's explicit clip;
 text metrics remain typographic metrics, not a widget hit box.
 
-Contiguous rectangles, lines and circles form one geometry run; images and
+Contiguous rectangles, lines, circles and paths form one geometry run; images and
 labels split it only where painter order requires it. Exhaustive `ScreenDraw`
 matches need the new `Primitives` variant. Inspect either geometry-run variant
 with `screen_primitive_run_records(run)`; the old rectangle accessor returns
@@ -323,7 +323,75 @@ than square fills. Images/text split contiguous geometry runs, not one draw
 per vector. `screen_primitives()` exposes the sorted sampled geometry.
 `ScreenDraw::Primitives` is the new mixed-vector run variant; rectangle-only
 applications retain the existing `Rectangles` variant. Same-source ties draw
-rectangle, line, circle, image, then text. All remain above World content.
+rectangle, line, circle, path, image, then text. All remain above World content.
+
+## Whole curves and outline-only circles
+
+Use one `ScreenPolylineVisual` per open curve instead of spawning one line per
+segment. Engine joins the segments and continues dash phase through the path;
+only its two endpoints receive caps. A two-point path is also a styled line:
+
+```rust
+use sim_logic::prelude::*;
+
+fn curve() -> LogicResult<ScreenPolylineVisual> {
+    let points = [
+        LogicalScreenPosition::new(10.25, 20.5),
+        LogicalScreenPosition::new(50.25, 20.5),
+        LogicalScreenPosition::new(70.25, 40.5),
+    ];
+    let style = StrokeStyle2d::new(2.0, Color::WHITE)
+        .with_cap(StrokeCap2d::Butt)
+        .with_join(StrokeJoin2d::Round);
+    Ok(ScreenPolylineVisual::new(&points, style)?)
+}
+```
+
+The component is approved automatically and needs no `Transform2d`. These are
+logical screen positions: a Math editor projects its document points into this
+space when its pan/zoom changes. Paths do not follow the World camera implicitly.
+`set_points` and `set_style` validate through Engine before committing an edit.
+Clones share immutable points; changing one does not mutate older snapshots.
+Unchanged points skip copying. Width must use logical pixels, not world units.
+Stroke colors, caps, joins, miter limits, dashes and markers use the exported
+`StrokeStyle2d` types and Engine's validation rules.
+
+`hit_test_centerline(pointer, radius)` is a selection helper, not a pixel test.
+Its explicit logical radius includes dash gaps and endpoint disks, ignores
+stroke width/markers/alpha, and respects the assigned clip and pointer viewport.
+The application chooses which eligible path wins. Fractional coordinates need
+no DPI multiplication: the desktop renderer handles the physical scale.
+
+Defaults allow 256 path sources and 65,536 aggregate source points, including
+empty-clipped paths. Disabled entities are excluded. Set
+`with_max_screen_polylines` and `with_max_screen_polyline_points` on `RenderLimits`
+for different workloads; `with_point_limit` sets a separate per-path ceiling.
+The shared screen `SceneBudget` and composed `FrameLimits` still apply. A
+10,000-point plot needs explicit vertex/byte/upload budgets in addition to its
+point allowance; raising a point limit alone does not reserve or authorize those
+resources. Shared paths count points per source occurrence for work limits.
+
+One path is one Engine scene command, not a promise of one GPU draw for any
+style. Prepared desktop runs reuse unchanged tessellation/uploads; Compact
+routes paths and circle outlines through ordinary prepared geometry. CPU
+extraction still rebuilds Engine scene commands each frame. Incremental CPU
+extraction has **not** been implemented by adding this component.
+
+`ScreenCircleVisual::outlined(center, radius, width, color)` creates a true
+stroke-only circle, with no transparent fill disk. Its pointer test uses the
+centered annulus. `fill_color()` returns `None`; `set_color` enables a fill.
+Removing the only outline with `set_stroke(None)` is rejected until a fill is
+enabled. Existing filled-circle constructors keep their behavior.
+
+Closed arbitrary paths remain unsupported in Engine 0.4.2. Repeating the first
+point at the end would produce two endpoint caps, not a joined seam, so Logic
+rejects that spelling with `ClosedPathUnsupported`. Use the circle/rectangle
+outline APIs for those shapes. This is not a polygon fill or closed-path API.
+
+Migration: `ResolvedScreenPrimitive` now includes `Polyline` and is `Clone`,
+not `Copy`, because paths share owned point storage. Add the variant to
+exhaustive matches and use `.cloned()` instead of `.copied()` on record iterators.
+Its ordering/source getters borrow the record; ordinary calls are unchanged.
 
 ## Keyboard focus
 

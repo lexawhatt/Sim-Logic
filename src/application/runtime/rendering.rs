@@ -126,6 +126,14 @@ type ScreenCircleExtractionQuery = QueryState<
     ),
     (Allow<Disabled>, Without<Disabled>),
 >;
+type ScreenPolylineExtractionQuery = QueryState<
+    (
+        Entity,
+        &'static ManagedEntity,
+        &'static crate::screen::ScreenPolylineVisual,
+    ),
+    (Allow<Disabled>, Without<Disabled>),
+>;
 
 pub(super) struct ExtractionQueries {
     cameras: CameraExtractionQuery,
@@ -135,6 +143,7 @@ pub(super) struct ExtractionQueries {
     screen_rectangles: ScreenRectangleExtractionQuery,
     screen_lines: ScreenLineExtractionQuery,
     screen_circles: ScreenCircleExtractionQuery,
+    screen_polylines: ScreenPolylineExtractionQuery,
     screen_images: ScreenImageExtractionQuery,
     #[cfg(feature = "headless-text")]
     screen_texts: ScreenTextExtractionQuery,
@@ -152,6 +161,7 @@ impl ExtractionQueries {
             screen_rectangles: world.query_filtered(),
             screen_lines: world.query_filtered(),
             screen_circles: world.query_filtered(),
+            screen_polylines: world.query_filtered(),
             screen_images: world.query_filtered(),
             #[cfg(feature = "headless-text")]
             screen_texts: world.query_filtered(),
@@ -326,6 +336,15 @@ pub(super) fn stage_runtime_world(
                 .screen_circles
                 .iter(&runtime.world)
                 .map(|(raw, entity, visual)| ScreenSource::Circle(entity.handle(raw), *visual)),
+        )
+        .chain(
+            runtime
+                .extraction_queries
+                .screen_polylines
+                .iter(&runtime.world)
+                .map(|(raw, entity, visual)| {
+                    ScreenSource::Polyline(entity.handle(raw), visual.clone())
+                }),
         );
     #[cfg(feature = "headless-text")]
     let screen_sources = screen_sources.chain(

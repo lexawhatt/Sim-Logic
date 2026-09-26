@@ -18,7 +18,7 @@ text = ["headless-text", "sim-engine/text"]
 
 [dependencies]
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std", "debug"] }
-sim-engine = { git = "https://github.com/lexawhatt/Sim-Engine.git", rev = "aecda2b69ba5d2c3b72827610ab7b41432ab78fe", default-features = false }
+sim-engine = { version = "=0.4.2", default-features = false }
 winit = { version = "=0.30.12", optional = true }
 pollster = { version = "=1.0.1", optional = true }
 rodio = { version = "=0.22.2", default-features = false, features = ["playback"], optional = true }

@@ -280,7 +280,8 @@ impl ExtractedFrame {
         self.storage.screen.resolved()
     }
 
-    /// Iterates over sorted screen rectangles, lines and circles without allocating.
+    /// Iterates over sorted screen rectangles, lines, circles and paths without allocating.
+    /// Path clones share their immutable CPU points.
     /// Values are current FrameUpdate presentation, independent of fixed interpolation.
     pub fn screen_primitives(&self) -> impl Iterator<Item = ResolvedScreenPrimitive> + '_ {
         self.storage.screen.primitive_records()
@@ -331,7 +332,7 @@ impl ExtractedFrame {
     ///
     /// Contiguous primitive runs, images, and optional text share layer, depth,
     /// and stable source order. Exact same-source ties put rectangles first,
-    /// then lines, circles, images, and text. Empty screen content produces no
+    /// then lines, circles, paths, images, and text. Empty screen content produces no
     /// items. This plan does not replace desktop aggregate budget checks.
     pub fn screen_draws(&self) -> &[ScreenDraw] {
         self.storage.screen.draws()
@@ -519,12 +520,21 @@ impl ExtractionBuffers {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ExtractionError {
-    /// A screen line/circle source count exceeded its explicit per-kind limit.
+    /// A screen line/circle/path source count exceeded its explicit per-kind limit.
     ScreenPrimitiveLimitExceeded {
         /// First source that exceeded the limit.
         entity: LogicEntity,
         /// Configured maximum for this primitive kind.
         limit: usize,
+    },
+    /// Enabled path points exceeded their aggregate CPU limit, including hidden clips.
+    ScreenPolylinePointsLimitExceeded {
+        /// Path that would exceed the limit.
+        entity: LogicEntity,
+        /// Configured aggregate path-point limit.
+        limit: usize,
+        /// Requested total, or usize::MAX on arithmetic overflow.
+        requested: usize,
     },
     /// A private staged snapshot was unavailable for completing 3D extraction.
     MissingStagedFrame,
@@ -712,6 +722,14 @@ impl fmt::Display for ExtractionError {
             Self::ScreenRectangleLimitExceeded { limit } => write!(
                 formatter,
                 "extracted screen rectangle count exceeds the limit of {limit}"
+            ),
+            Self::ScreenPolylinePointsLimitExceeded {
+                entity,
+                limit,
+                requested,
+            } => write!(
+                formatter,
+                "screen path {entity:?} exceeds point limit {limit}, requested {requested}"
             ),
             Self::ScreenPrimitiveLimitExceeded { entity, limit } => write!(
                 formatter,

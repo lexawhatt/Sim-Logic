@@ -18,6 +18,9 @@ pub use clip::ScreenClip;
 #[path = "screen/vectors.rs"]
 mod vectors;
 pub use vectors::{ScreenCircleVisual, ScreenLineVisual};
+#[path = "screen/polyline.rs"]
+mod polyline;
+pub use polyline::{ScreenPolylineError, ScreenPolylineVisual};
 
 /// A filled rectangle with optional rounded corners and a decorative outline.
 ///
@@ -198,6 +201,8 @@ impl ScreenRectangleVisual {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ScreenVisualError {
+    /// Removing the stroke would leave an outline-only shape with no paint.
+    MissingPaint,
     /// Image rotation was non-finite.
     InvalidRotation {
         /// Rejected clockwise angle in radians.
@@ -247,6 +252,7 @@ pub enum ScreenVisualError {
 impl fmt::Display for ScreenVisualError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingPaint => formatter.write_str("an outline-only shape requires a stroke"),
             Self::InvalidRotation { value } => {
                 write!(formatter, "non-finite screen rotation: {value}")
             }

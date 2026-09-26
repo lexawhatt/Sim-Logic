@@ -72,7 +72,7 @@ pub const DEFAULT_WORLD_SCENE_BUDGET: SceneBudget = SceneBudget::new(
 
 /// Bounded work accepted by the default logical-screen scene.
 pub const DEFAULT_SCREEN_SCENE_BUDGET: SceneBudget =
-    SceneBudget::new(256, 0, 3_072, 256 * 1024, 512 * 1024, 512 * 1024, 256);
+    SceneBudget::new(256, 65_536, 3_072, 256 * 1024, 512 * 1024, 512 * 1024, 256);
 
 /// Renderer-independent form of the default heterogeneous-frame budget.
 ///
@@ -174,6 +174,8 @@ pub struct RenderLimits {
     max_screen_rectangles: usize,
     max_screen_lines: usize,
     max_screen_circles: usize,
+    max_screen_polylines: usize,
+    max_screen_polyline_points: usize,
     max_screen_images: usize,
     #[cfg(feature = "headless-text")]
     max_screen_texts: usize,
@@ -206,6 +208,8 @@ impl RenderLimits {
             max_screen_rectangles: DEFAULT_MAX_SCREEN_RECTANGLES,
             max_screen_lines: 256,
             max_screen_circles: 256,
+            max_screen_polylines: 256,
+            max_screen_polyline_points: 65_536,
             max_screen_images: 0,
             #[cfg(feature = "headless-text")]
             max_screen_texts: 0,
@@ -250,6 +254,26 @@ impl RenderLimits {
     /// Returns the maximum screen-circle source count; default 256, including empty clips.
     pub const fn max_screen_circles(self) -> usize {
         self.max_screen_circles
+    }
+    /// Returns the enabled open-path count limit (256 by default), including hidden clips.
+    pub const fn max_screen_polylines(self) -> usize {
+        self.max_screen_polylines
+    }
+    /// Sets the open-path count limit independently of line/circle limits.
+    pub const fn with_max_screen_polylines(mut self, count: usize) -> Self {
+        self.max_screen_polylines = count;
+        self
+    }
+    /// Returns the total enabled path-point limit (65,536 by default), including
+    /// hidden clips and shared paths counted once for each occurrence.
+    pub const fn max_screen_polyline_points(self) -> usize {
+        self.max_screen_polyline_points
+    }
+    /// Sets aggregate open-path points inspected per frame, separate from the
+    /// SceneBudget charged for visible commands/points and per-path construction.
+    pub const fn with_max_screen_polyline_points(mut self, count: usize) -> Self {
+        self.max_screen_polyline_points = count;
+        self
     }
     /// Sets the screen-line count limit independently of shared scene work/byte limits.
     pub const fn with_max_screen_lines(mut self, count: usize) -> Self {
@@ -436,7 +460,7 @@ mod tests {
         assert_eq!(world.max_draw_batches(), 10_000);
 
         assert_eq!(screen.max_commands(), 256);
-        assert_eq!(screen.max_points(), 0);
+        assert_eq!(screen.max_points(), 65_536);
         assert_eq!(screen.max_tessellated_vertices(), 3_072);
         assert_eq!(screen.max_retained_bytes(), 256 * 1024);
         assert_eq!(screen.max_allocation_bytes(), 512 * 1024);

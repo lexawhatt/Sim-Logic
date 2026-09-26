@@ -44,6 +44,7 @@ pub struct DesktopScreenUpdates {
     pub uploaded_bytes: usize,
     /// Current retained Engine recovery storage plus comparison-record capacity.
     /// Excludes fixed object metadata, temporary conversion, driver and in-flight memory.
+    /// Shared source path points/styles belong to the CPU visual/snapshot, not this count.
     pub retained_cpu_bytes: usize,
     /// CPU wall time for comparison, construction and queueing resource updates.
     pub cpu_time: Duration,
@@ -122,6 +123,7 @@ pub(super) struct DesktopGeometry {
 impl DesktopGeometry {
     pub(super) fn clear(&mut self) {
         self.entries.clear();
+        self.scratch.clear();
         self.generation = None;
     }
     pub(super) fn has_runs(&self) -> bool {
@@ -179,12 +181,12 @@ impl DesktopGeometry {
                 .ok_or(DesktopScreenError::InvalidDrawPlan)?
                 .parts;
             let mut index = 0;
-            while let Some(first) = records.peek().copied() {
+            while let Some(first) = records.peek() {
                 let compact = mode == DesktopScreenMode::Compact && compact_candidate(first);
                 self.scratch.clear();
                 while records.peek().is_some_and(|record| {
                     mode != DesktopScreenMode::Compact
-                        || (self.scratch.len() < 256 && compact_candidate(*record) == compact)
+                        || (self.scratch.len() < 256 && compact_candidate(record) == compact)
                 }) {
                     self.scratch
                         .try_reserve(1)
@@ -207,6 +209,8 @@ impl DesktopGeometry {
             }
             parts.truncate(index);
         }
+        // Scratch must not retain shared path snapshots from a retired run.
+        self.scratch.clear();
         self.updates.retained_cpu_bytes = self
             .entries
             .iter()
@@ -252,13 +256,14 @@ impl DesktopGeometry {
     }
 }
 
-fn compact_candidate(record: ResolvedScreenPrimitive) -> bool {
+fn compact_candidate(record: &ResolvedScreenPrimitive) -> bool {
     match record {
         ResolvedScreenPrimitive::Rectangle(value) => {
             value.visual().corner_radius() == 0.0 && value.visual().stroke().is_none()
         }
         ResolvedScreenPrimitive::Line { .. } => true,
         ResolvedScreenPrimitive::Circle { visual, .. } => visual.stroke().is_none(),
+        ResolvedScreenPrimitive::Polyline { .. } => false,
     }
 }
 
@@ -300,7 +305,7 @@ fn prepare_part(
                 .saturating_mul(size_of::<ResolvedScreenPrimitive>()),
         })?;
     for record in records {
-        captured.push(*record);
+        captured.push(record.clone());
     }
     let compact = if compact {
         match ScreenPrimitive2d::from_screen_scene(&scene) {

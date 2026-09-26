@@ -255,3 +255,55 @@ fn warmed_vector_extraction_reuses_storage_without_stale_geometry() -> Result<()
     assert_eq!(buffer.scene.command_count(), 1);
     Ok(())
 }
+
+#[test]
+fn whole_path_is_one_engine_command_and_foreign_hidden_paths_are_rejected()
+-> Result<(), Box<dyn Error>> {
+    let mut world = World::new();
+    let source = source(&mut world, 1, 1)?;
+    let points: Vec<_> = (0..10_000)
+        .map(|i| LogicalScreenPosition::new(i as f32 * 0.25, 30.5))
+        .collect();
+    let mut path = crate::screen::ScreenPolylineVisual::new(
+        &points,
+        sim_engine::StrokeStyle2d::new(1.5, Color::WHITE),
+    )?;
+    let limits = RenderLimits::default().with_screen_scene_budget(sim_engine::SceneBudget::new(
+        256,
+        10_000,
+        2_000_000,
+        8 * 1024 * 1024,
+        16 * 1024 * 1024,
+        128 * 1024 * 1024,
+        256,
+    ));
+    let generation = source.entity.world_generation();
+    let mut buffer = ScreenExtractionBuffer::new(limits)?;
+    buffer.extract(
+        generation,
+        limits,
+        [ScreenSource::Polyline(source.entity, path.clone())],
+    )?;
+    assert_eq!(buffer.scene.command_count(), 1);
+    assert_eq!(buffer.scene.statistics().retained_points(), 10_000);
+    buffer.clear();
+    path.set_clip(crate::screen::ScreenClip::Empty);
+    buffer.extract(
+        generation,
+        limits,
+        [ScreenSource::Polyline(source.entity, path.clone())],
+    )?;
+    assert_eq!(buffer.scene.command_count(), 0);
+    assert_eq!(buffer.geometry_len(), 1);
+    buffer.clear();
+    let foreign = WorldGeneration::new(ApplicationId::from_raw(2), 1);
+    assert!(matches!(
+        buffer.extract(
+            foreign,
+            limits,
+            [ScreenSource::Polyline(source.entity, path)]
+        ),
+        Err(ExtractionError::ForeignEntity { .. })
+    ));
+    Ok(())
+}

@@ -171,7 +171,8 @@ pub mod prelude {
     pub use crate::resources::{AppRes, AppResMut, ApplicationResourceError};
     pub use crate::screen::{
         ImageFilter, ImageRegion, ImageVisualError, ScreenCircleVisual, ScreenClip,
-        ScreenImageVisual, ScreenLineVisual, ScreenRectangleVisual, ScreenVisualError,
+        ScreenImageVisual, ScreenLineVisual, ScreenPolylineError, ScreenPolylineVisual,
+        ScreenRectangleVisual, ScreenVisualError,
     };
     pub use crate::system::{Stage, SystemRunFailure, SystemSetupError};
     #[cfg(feature = "headless-text")]

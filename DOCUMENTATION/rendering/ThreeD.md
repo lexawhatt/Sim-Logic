@@ -5,7 +5,7 @@
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
 background. This is real geometric 3D, not projected screen rectangles.
-The bridge pins the official Engine `0.4.1` release from crates.io.
+The bridge pins the official Engine `0.4.2` release from crates.io.
 Cuboids keep their simple opaque/outline API.
 Host-built meshes support vertex colors, UVs, normals, Opaque/Mask/Blend
 materials, textures and explicit lighting/fog. Mesh import, normal generation,

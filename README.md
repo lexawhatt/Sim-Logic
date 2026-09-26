@@ -1,10 +1,8 @@
 # Sim;Logic
 
 Sim;Logic is a code-first application layer for
-[Sim;Engine](https://github.com/lexawhatt/Sim-Engine), currently pinned to the
-0.4.2 Git integration candidate
-[`aecda2b`](https://github.com/lexawhatt/Sim-Engine/commit/aecda2b69ba5d2c3b72827610ab7b41432ab78fe).
-This temporary development pin is not a crates.io release or Windows qualification.
+[Sim;Engine](https://github.com/lexawhatt/Sim-Engine), using the released
+[0.4.2 crate](https://crates.io/crates/sim-engine/0.4.2).
 It keeps the program in ordinary Rust, but supplies the pieces that otherwise
 have to be rebuilt for every interactive simulation: entities and components, ordered systems, typed
 input, fixed updates, interpolation, World replacement, and a window/render

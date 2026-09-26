@@ -17,7 +17,7 @@ use super::{
 /// belong only to their containing snapshot, not to future frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenDraw {
-    /// A contiguous run of mixed rectangles, lines and circles, batched together.
+    /// A contiguous run of rectangles, lines, circles and paths, batched together.
     Primitives {
         /// Snapshot-local geometry-run index (same namespace as rectangle runs).
         run: usize,
@@ -184,7 +184,7 @@ impl ScreenExtractionBuffer {
         // The aggregate full ScreenScene already validated total limits.
         let run_budget = SceneBudget::new(
             count,
-            0,
+            budget.max_points(),
             budget.max_tessellated_vertices(),
             budget.max_retained_bytes(),
             budget.max_allocation_bytes(),

@@ -13,6 +13,8 @@ use winit::{
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Action {}
+#[path = "path_tests.rs"]
+mod paths;
 #[derive(Resource, Default)]
 struct Step(u8);
 
@@ -51,6 +53,12 @@ fn runner() -> Result<HeadlessRunner<Action>, Box<dyn Error>> {
 }
 
 fn probe(renderer: &mut WgpuRenderer) -> LogicResult {
+    println!(
+        "screen fixture: {} / {}",
+        renderer.adapter_name(),
+        renderer.adapter_backend()
+    );
+    assert!(renderer.adapter_backend().eq_ignore_ascii_case("vulkan"));
     let mut runner = runner()?;
     let mut cache = DesktopGeometry::default();
     let compact = DesktopScreenMode::Compact;
@@ -141,7 +149,7 @@ fn probe(renderer: &mut WgpuRenderer) -> LogicResult {
             .parts
             .iter()
             .flat_map(|part| part.records.iter())
-            .copied()
+            .cloned()
             .eq(mixed
                 .extracted_frame()
                 .unwrap()
@@ -162,6 +170,7 @@ fn probe(renderer: &mut WgpuRenderer) -> LogicResult {
     println!(
         "retained screen: unchanged, update, hide/show, fallback, generation and replacement-device checks passed"
     );
+    paths::probe(renderer)?;
     Ok(())
 }
 
@@ -175,13 +184,9 @@ impl ApplicationHandler for Fixture {
             return;
         }
         self.result = Some((|| {
-            let window = Arc::new(
-                event_loop.create_window(
-                    Window::default_attributes()
-                        .with_inner_size(PhysicalSize::new(64, 64))
-                        .with_visible(false),
-                )?,
-            );
+            let window = Arc::new(event_loop.create_window(
+                Window::default_attributes().with_inner_size(PhysicalSize::new(64, 64)),
+            )?);
             let mut renderer = pollster::block_on(WgpuRenderer::new(window, 64, 64))?;
             probe(&mut renderer)
         })());

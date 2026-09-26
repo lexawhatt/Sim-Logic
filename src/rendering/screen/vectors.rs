@@ -139,13 +139,14 @@ fn validate_endpoints(
     Ok(())
 }
 
-/// A filled circle with optional centered outline in logical screen pixels.
+/// A filled or outline-only circle in logical screen pixels.
 /// FrameUpdate may animate center/radius/color even when fixed simulation is paused.
 #[derive(Debug, Clone, Copy, PartialEq, Component)]
 pub struct ScreenCircleVisual {
     center: LogicalScreenPosition,
     radius: f32,
     color: Color,
+    filled: bool,
     stroke: Option<Stroke>,
     layer: Layer,
     depth: f32,
@@ -191,6 +192,7 @@ impl ScreenCircleVisual {
             center,
             radius,
             color,
+            filled: true,
             stroke: None,
             layer: Layer::DEFAULT,
             depth: 0.0,
@@ -198,6 +200,8 @@ impl ScreenCircleVisual {
         })
     }
     /// Returns the logical screen center.
+    ///
+    /// For an outline-only circle this is also the stroke's center of symmetry.
     pub const fn center(&self) -> LogicalScreenPosition {
         self.center
     }
@@ -205,9 +209,28 @@ impl ScreenCircleVisual {
     pub const fn radius(&self) -> f32 {
         self.radius
     }
-    /// Returns normalized straight-linear fill color.
+    /// Returns the stored fill color (inactive for an outline-only circle).
     pub const fn color(&self) -> Color {
         self.color
+    }
+    /// Creates a centered circular outline without a filled disk.
+    /// Width/radius must be finite and positive; color is normalized linear RGBA.
+    pub fn outlined(
+        center: LogicalScreenPosition,
+        radius: f32,
+        width: f32,
+        color: Color,
+    ) -> Result<Self, ScreenVisualError> {
+        let mut circle = Self::new(center, radius, Color::TRANSPARENT)?;
+        let stroke = Stroke::new(width, color);
+        validate_stroke(stroke)?;
+        circle.filled = false;
+        circle.stroke = Some(stroke);
+        Ok(circle)
+    }
+    /// Returns active fill color, or None for an outline-only circle.
+    pub const fn fill_color(&self) -> Option<Color> {
+        if self.filled { Some(self.color) } else { None }
     }
     /// Atomically changes center and radius, preserving old values on failure.
     pub fn set_geometry(
@@ -228,10 +251,11 @@ impl ScreenCircleVisual {
     pub fn set_radius(&mut self, radius: f32) -> Result<(), ScreenVisualError> {
         self.set_geometry(self.center, radius)
     }
-    /// Sets normalized fill color; rejection leaves the previous color intact.
+    /// Sets and enables normalized fill color; rejection preserves all previous state.
     pub fn set_color(&mut self, color: Color) -> Result<(), ScreenVisualError> {
         validate_color(color)?;
         self.color = color;
+        self.filled = true;
         Ok(())
     }
     /// Returns the optional decorative outline.
@@ -239,31 +263,47 @@ impl ScreenCircleVisual {
         self.stroke
     }
     /// Sets a positive-width normalized-color outline, or removes it with None.
+    /// An outline-only circle rejects removal until a fill is enabled.
     pub fn set_stroke(&mut self, stroke: Option<Stroke>) -> Result<(), ScreenVisualError> {
+        if !self.filled && stroke.is_none() {
+            return Err(ScreenVisualError::MissingPaint);
+        }
         if let Some(stroke) = stroke {
             validate_stroke(stroke)?;
         }
         self.stroke = stroke;
         Ok(())
     }
-    /// Tests the clipped filled disk, not the decorative stroke or painter priority.
+    /// Tests the clipped disk for filled circles, or the centered annulus for
+    /// outline-only circles. Does not inspect alpha, MSAA or painter priority.
     pub fn contains_pointer(&self, sample: crate::input::PointerSample) -> bool {
         if !self.clip.contains_pointer(sample) {
             return false;
         }
         let p = sample.position().to_vec2();
         let c = self.center.to_vec2();
-        (f64::from(p.x()) - f64::from(c.x())).hypot(f64::from(p.y()) - f64::from(c.y()))
-            <= f64::from(self.radius)
+        let distance =
+            (f64::from(p.x()) - f64::from(c.x())).hypot(f64::from(p.y()) - f64::from(c.y()));
+        if self.filled {
+            distance <= f64::from(self.radius)
+        } else {
+            self.stroke.is_some_and(|stroke| {
+                (distance - f64::from(self.radius)).abs() <= f64::from(stroke.width()) * 0.5
+            })
+        }
     }
     pub(crate) fn append(&self, scene: &mut ScreenScene) -> Result<(), SceneError> {
         if !apply_clip(scene, self.clip)? {
             return Ok(());
         }
-        let style = self.stroke.map_or_else(
-            || ShapeStyle::filled(self.color),
-            |stroke| ShapeStyle::fill_stroke(self.color, stroke.width(), stroke.color()),
-        );
+        let style = if let (false, Some(stroke)) = (self.filled, self.stroke) {
+            ShapeStyle::stroked(stroke.width(), stroke.color())
+        } else {
+            self.stroke.map_or_else(
+                || ShapeStyle::filled(self.color),
+                |stroke| ShapeStyle::fill_stroke(self.color, stroke.width(), stroke.color()),
+            )
+        };
         let radius = LogicalPixels::new(self.radius)
             .map_err(|_| SceneError::InvalidDimension(sim_engine::ScenePrimitive::Circle))?;
         scene.try_circle_on_layer(self.layer, self.center, radius, style)
@@ -280,7 +320,7 @@ fn validate_circle(center: LogicalScreenPosition, radius: f32) -> Result<(), Scr
     Ok(())
 }
 
-fn apply_clip(scene: &mut ScreenScene, clip: ScreenClip) -> Result<bool, SceneError> {
+pub(super) fn apply_clip(scene: &mut ScreenScene, clip: ScreenClip) -> Result<bool, SceneError> {
     match clip {
         ScreenClip::Empty => Ok(false),
         ScreenClip::Unclipped => {
