@@ -230,9 +230,35 @@ no cache of every string the application has ever displayed.
 Desktop presentation keeps a retained Engine run per live visible entity and
 an atlas per used font registration. Unchanged lines reuse their buffers;
 changed lines use Engine's capacity-preserving `update_from_shaped`. Placement
-and tint are per-draw values and do not rewrite shared glyph layout. At display
+and tint never rewrite the shared source glyph layout. At display
 scale 1.0, `prepare_from_shaped` and `update_from_shaped` borrow the exact line
 already prepared by Logic, so GPU preparation does not repeat shaping.
+
+The desktop bridge groups adjacent labels with the same font registration into
+Engine glyph batches by default, at most 256 labels per group. It never moves
+text across an image, geometry run, different font or hidden label. The
+existing painter order and each label's fixed clip remain intact. Adjacent
+equal clips share a draw; changing clips can require several draws in a group.
+
+Unchanged groups reuse their exact snapshot without upload. Changing position,
+tint or text updates that group's instance buffer; a clip-only change updates
+its spans without an instance upload. This trades additional retained snapshot
+memory and changed-group uploads for fewer frame items/draws. Deleting or
+reordering labels can repartition subsequent groups; it is not a per-glyph
+dirty-region updater. Source text runs remain retained separately.
+
+For a paired baseline or the individual-run route, call
+`desktop_config.set_text_batching(false)` before `run_desktop`. In that route,
+placement/tint stay per-draw values. Both routes use Engine's validated APIs;
+grouped snapshots bake placement into glyph destinations, while individual
+runs keep a separate placement. Neither bypasses Engine precision errors.
+This choice is independent of `set_screen_mode`, which controls geometry.
+
+`DesktopRunReport::last_text_updates()` separates source-run preparation time
+from batch-update time. It reports group reuse/creation/update counts, actual
+glyphs, clip-span draws and batch upload/retention bytes. These bytes exclude
+the original runs, atlases, shared font/layout storage, frame uniforms and
+driver allocations. They are not total text memory or GPU timing.
 
 There is one explicit DPI boundary: canonical labels prepare at scale 1.0,
 while Engine checks the exact DPI of a prepared line against its atlas. At
@@ -247,7 +273,12 @@ Font registrations bound the number of retained atlases. The frozen active
 label limit and each font's run budget bound retained label buffers, including
 their reusable capacity. Retention can exceed the current string lengths;
 the snapshot UTF-8/glyph allowances do not describe the whole desktop cache.
-Empty strings allocate no atlas or run. Unused atlases may remain for reuse
+Each active group additionally retains comparison records and Engine instance
+storage. Its glyph ceiling rounds the creation count up to a power of two;
+growth beyond it replaces that group. Byte limits include all 256 possible
+clip spans. Allocation is fallible; old/new resources can overlap during
+replacement and GPU retirement. Dropped groups do not retain string history.
+Empty strings and `ScreenClip::Empty` allocate no atlas or run. Unused atlases may remain for reuse
 until DPI/device invalidation or application shutdown.
 
 CPU extraction publishes the complete World-plus-screen snapshot only after
@@ -256,7 +287,7 @@ partial text overlay. Rasterization and GPU preparation can still fail after
 CPU validation: for example, a glyph may not fit the atlas at the current DPI.
 The desktop runner returns a contextual text preparation error and presents
 no partially composed frame. Earlier cache warming or successful individual
-run uploads are not rolled back. This is not a recoverable UI error dialogue.
+run/batch uploads are not rolled back. This is not a recoverable UI error dialogue.
 
 Changing DPI rebuilds desktop text resources for the new physical glyph size;
 logical metrics and canonical application state do not change. Renderer

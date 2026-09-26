@@ -16,6 +16,9 @@ use crate::{
 #[path = "text/prepared.rs"]
 mod prepared;
 use prepared::DesktopPreparedLine;
+#[path = "text/batches.rs"]
+mod batches;
+pub use batches::DesktopTextUpdates;
 
 /// A managed label failed desktop preparation after a valid CPU frame.
 ///
@@ -44,6 +47,15 @@ pub enum DesktopTextError {
         /// Exact font/style provenance or underlying atlas/run failure.
         error: sim_engine::PreparedTextError,
     },
+    /// Engine rejected a grouped snapshot of adjacent labels.
+    Batch {
+        /// First label in the group (the underlying error may involve another).
+        source: LogicEntity,
+        /// Exact glyph, allocation or batch-budget failure.
+        error: sim_engine::GlyphError,
+    },
+    /// Group size or derived byte limits cannot be represented.
+    BatchSizeOverflow,
     /// Bounded cache metadata could not be allocated.
     Allocation {
         /// Minimum additional metadata bytes requested.
@@ -61,6 +73,10 @@ impl fmt::Display for DesktopTextError {
             Self::Prepared { source, error } => {
                 write!(f, "text {source:?} prepared layout: {error}")
             }
+            Self::Batch { source, error } => {
+                write!(f, "text group starting at {source:?}: {error}")
+            }
+            Self::BatchSizeOverflow => f.write_str("text group size exceeds addressable limits"),
             Self::Allocation { requested_bytes } => {
                 write!(f, "text cache could not reserve {requested_bytes} bytes")
             }
@@ -75,6 +91,7 @@ impl Error for DesktopTextError {
             Self::Settings { error, .. } => Some(error),
             Self::Engine { error, .. } => Some(error),
             Self::Prepared { error, .. } => Some(error),
+            Self::Batch { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -97,6 +114,8 @@ struct RunEntry {
 #[derive(Default)]
 pub(super) struct DesktopText {
     cache: RetainedTextCache<FontEntry, RunEntry>,
+    batches: Vec<batches::BatchEntry>,
+    pub(super) updates: DesktopTextUpdates,
 }
 
 /// Resource-free bookkeeping can be tested without fabricating Engine handles.
@@ -177,15 +196,26 @@ impl DesktopText {
     }
 
     pub(super) fn clear(&mut self) {
+        self.batches.clear();
         self.cache.clear();
+        self.updates = DesktopTextUpdates::default();
     }
 
     pub(super) fn prepare(
         &mut self,
         renderer: &mut WgpuRenderer,
         extracted: &ExtractedFrame,
+        batching: bool,
     ) -> Result<(), DesktopTextError> {
+        let started = std::time::Instant::now();
+        self.updates = DesktopTextUpdates::default();
         let scale = renderer.scale_factor() as f32;
+        if self.cache.generation != Some(extracted.world_generation())
+            || self.cache.scale_bits != Some(scale.to_bits())
+            || !batching
+        {
+            self.batches.clear();
+        }
         self.cache
             .begin_frame(extracted.world_generation(), scale, || {
                 renderer.clear_frame_cache()
@@ -205,6 +235,15 @@ impl DesktopText {
                 && visual.visual().clip() != crate::screen::ScreenClip::Empty
             {
                 self.prepare_one(renderer, visual, scale)?;
+            }
+        }
+        self.updates.source_cpu_time = started.elapsed();
+        if batching {
+            // An error may follow accepted uploads, but no partial frame is
+            // presented and no stale comparison key survives into the retry.
+            if let Err(error) = self.prepare_batches(renderer, extracted) {
+                self.batches.clear();
+                return Err(error);
             }
         }
         Ok(())
@@ -359,6 +398,9 @@ impl DesktopText {
     }
 }
 
+#[cfg(test)]
+#[path = "text/batch_tests.rs"]
+mod batch_tests;
 #[cfg(test)]
 #[path = "text/tests.rs"]
 mod tests;

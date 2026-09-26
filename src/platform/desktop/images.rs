@@ -9,6 +9,7 @@ use sim_engine::{
     RendererFrameError, SceneStatistics, Vec2, WgpuRenderer,
 };
 
+use super::draw_plan::{self, DesktopDraw};
 use crate::{
     ExtractedFrame, ScreenDraw,
     assets::{ImageAssetId, ImageAssetRegistry},
@@ -195,10 +196,11 @@ impl<K: Copy + Eq, V> ResourceCache<K, V> {
 pub(super) struct DesktopImages {
     pub(super) geometry: super::geometry::DesktopGeometry,
     pub(super) screen_mode: super::geometry::DesktopScreenMode,
+    pub(super) text_batching: bool,
     resources: ResourceCache<ImageAssetId, Image2d>,
     referenced: ScreenReferences,
     #[cfg(feature = "text")]
-    texts: super::text::DesktopText,
+    pub(super) texts: super::text::DesktopText,
 }
 
 #[derive(Default)]
@@ -236,6 +238,7 @@ impl DesktopImages {
         Self {
             geometry: super::geometry::DesktopGeometry::default(),
             screen_mode: super::geometry::DesktopScreenMode::default(),
+            text_batching: true,
             resources: ResourceCache::new(),
             referenced: ScreenReferences::default(),
             #[cfg(feature = "text")]
@@ -267,6 +270,7 @@ impl DesktopImages {
             budget,
             Some(target_bytes),
             self.screen_mode,
+            self.text_batching,
         )
     }
 
@@ -413,6 +417,7 @@ fn preflight(
         budget,
         None,
         super::geometry::DesktopScreenMode::Streaming,
+        false,
     )
 }
 
@@ -423,6 +428,7 @@ fn preflight_with_target(
     budget: FrameBudget,
     target_bytes: Option<usize>,
     mode: super::geometry::DesktopScreenMode,
+    text_batching: bool,
 ) -> Result<(), ScreenPresentationError> {
     referenced.clear();
     if referenced.images.capacity() < registry.len() {
@@ -439,8 +445,23 @@ fn preflight_with_target(
         work.image();
         work.texture_bytes = bytes;
     }
-    for draw in extracted.screen_draws() {
-        match *draw {
+    for draw in draw_plan::draws(extracted, text_batching) {
+        #[cfg(not(feature = "text"))]
+        let DesktopDraw::Single(draw) = draw?;
+        #[cfg(feature = "text")]
+        let draw = match draw? {
+            DesktopDraw::Single(draw) => draw,
+            #[cfg(feature = "text")]
+            DesktopDraw::TextBatch(range) => {
+                account_texts(
+                    &mut work,
+                    referenced,
+                    &extracted.resolved_screen_texts()[range],
+                )?;
+                continue;
+            }
+        };
+        match draw {
             #[cfg(all(feature = "headless-text", not(feature = "text")))]
             ScreenDraw::Text { .. } => return Err(DesktopImageError::TextFeatureRequired.into()),
             ScreenDraw::Rectangles { run } | ScreenDraw::Primitives { run } => {
@@ -481,41 +502,58 @@ fn preflight_with_target(
                     .resolved_screen_texts()
                     .get(index)
                     .ok_or(super::text::DesktopTextError::InvalidDrawPlan)?;
-                // Shaped count includes spacing glyphs, so this is conservative.
-                // Engine validates actual raster geometry and draw count later.
-                if text.text().is_empty()
-                    || text.visual().clip() == crate::screen::ScreenClip::Empty
-                {
-                    continue;
+                if draw_plan::visible(text) {
+                    account_texts(&mut work, referenced, std::slice::from_ref(text))?;
                 }
-                let font = text.font();
-                if !referenced.fonts.contains(font) {
-                    referenced.fonts.try_reserve(1).map_err(|_| {
-                        super::text::DesktopTextError::Allocation {
-                            requested_bytes: size_of::<crate::text::TextFont>(),
-                        }
-                    })?;
-                    referenced.fonts.push(font.clone());
-                    let atlas = font.settings().atlas_budget();
-                    work.texture_bytes = work.texture_bytes.saturating_add(
-                        (atlas.width() as usize)
-                            .saturating_mul(atlas.height() as usize)
-                            .saturating_mul(4),
-                    );
-                }
-                work.image();
-                work.vertices = work.vertices.saturating_add(
-                    text.visual()
-                        .glyph_count()
-                        .saturating_sub(1)
-                        .saturating_mul(6),
-                );
             }
         }
     }
     // This preflight covers public CPU statistics. Engine also checks its
     // private uniform sizes and exact tessellation before presenting anything.
     work.validate(budget)?;
+    Ok(())
+}
+
+#[cfg(feature = "text")]
+fn account_texts(
+    work: &mut FrameWork,
+    referenced: &mut ScreenReferences,
+    texts: &[crate::ResolvedScreenText],
+) -> Result<(), super::text::DesktopTextError> {
+    let first = texts
+        .first()
+        .ok_or(super::text::DesktopTextError::InvalidDrawPlan)?;
+    let font = first.font();
+    if !referenced.fonts.contains(font) {
+        referenced
+            .fonts
+            .try_reserve(1)
+            .map_err(|_| super::text::DesktopTextError::Allocation {
+                requested_bytes: size_of::<crate::text::TextFont>(),
+            })?;
+        referenced.fonts.push(font.clone());
+        let atlas = font.settings().atlas_budget();
+        work.texture_bytes = work.texture_bytes.saturating_add(
+            (atlas.width() as usize)
+                .saturating_mul(atlas.height() as usize)
+                .saturating_mul(4),
+        );
+    }
+    work.passes = work.passes.saturating_add(1);
+    work.commands = work.commands.saturating_add(1);
+    let mut previous_clip = None;
+    for text in texts {
+        // Shaped count includes spacing glyphs, so both vertices and clip spans
+        // are conservative. Engine validates actual raster counts afterward.
+        work.vertices = work
+            .vertices
+            .saturating_add(text.visual().glyph_count().saturating_mul(6));
+        let clip = text.visual().clip();
+        if previous_clip != Some(clip) {
+            work.draw_calls = work.draw_calls.saturating_add(1);
+            previous_clip = Some(clip);
+        }
+    }
     Ok(())
 }
 
@@ -579,6 +617,7 @@ pub(super) fn present(
         budget,
         target.map(RenderTarget2d::allocation_bytes),
         images.screen_mode,
+        images.text_batching,
     )?;
     let viewport = renderer
         .logical_viewport()
@@ -589,7 +628,9 @@ pub(super) fn present(
         .prepare(renderer, extracted, images.screen_mode)
         .map_err(DesktopImageError::Geometry)?;
     #[cfg(feature = "text")]
-    images.texts.prepare(renderer, extracted)?;
+    images
+        .texts
+        .prepare(renderer, extracted, images.text_batching)?;
 
     let mut frame = renderer.begin_frame(extracted.background(), budget)?;
     frame.draw_scene(
@@ -602,11 +643,25 @@ pub(super) fn present(
         // reveals the underlying World through a transparent 3D background.
         frame.draw_render_target(target, BlendMode::Alpha, 1.0, FramePassOptions::new(0))?;
     }
-    for draw in extracted.screen_draws() {
+    #[cfg(feature = "text")]
+    let mut text_batch = 0;
+    for draw in draw_plan::draws(extracted, images.text_batching) {
         // FrameComposer keeps insertion order when the integer order is equal.
         // CPU layer/depth/entity sorting therefore survives interleaved types.
         let options = FramePassOptions::new(1);
-        match *draw {
+        #[cfg(not(feature = "text"))]
+        let DesktopDraw::Single(draw) = draw?;
+        #[cfg(feature = "text")]
+        let draw = match draw? {
+            DesktopDraw::Single(draw) => draw,
+            #[cfg(feature = "text")]
+            DesktopDraw::TextBatch(_) => {
+                images.texts.draw_batch(&mut frame, text_batch, options)?;
+                text_batch += 1;
+                continue;
+            }
+        };
+        match draw {
             #[cfg(all(feature = "headless-text", not(feature = "text")))]
             ScreenDraw::Text { .. } => return Err(DesktopImageError::TextFeatureRequired.into()),
             ScreenDraw::Rectangles { run } | ScreenDraw::Primitives { run } => {
@@ -760,6 +815,77 @@ mod tests {
         assert_eq!(cache.entries.len(), 2);
     }
 
+    #[cfg(feature = "text")]
+    #[test]
+    fn glyph_group_preflight_counts_one_item_but_preserves_clip_draw_limits() -> crate::LogicResult
+    {
+        use crate::prelude::*;
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+        enum Action {}
+        let mut config = AppConfig::default();
+        config.set_render_limits(
+            RenderLimits::default()
+                .with_max_screen_texts(3)
+                .with_max_screen_text_bytes(64)
+                .with_max_screen_text_glyphs(16),
+        );
+        let mut app = Application::<Action>::new(config)?;
+        let font = app.register_font(
+            include_bytes!("../../../tests/assets/text/DejaVuSans.ttf").to_vec(),
+            TextSettings::new(18.0)?,
+        )?;
+        let a = ScreenTextVisual::new(font, "A", LogicalScreenPosition::new(3.0, 30.0))?;
+        let mut b = a.clone();
+        b.set_clip(ScreenClip::Rectangle(sim_engine::ScreenClipRect::new(
+            LogicalScreenPosition::new(0.0, 0.0),
+            LogicalScreenPosition::new(40.0, 40.0),
+        )?));
+        let camera = ActiveCamera2d::centered(1.0)?;
+        let initial = app.register_world("group-budget", move |world| {
+            world.spawn(camera)?;
+            world.spawn(a.clone())?;
+            world.spawn(b.clone())?;
+            world.spawn(a.clone())?;
+            Ok(())
+        })?;
+        let runner = app.build_headless(initial)?;
+        let snapshot = runner.extracted_frame().unwrap();
+        let mut references = ScreenReferences::default();
+        let check = |references: &mut ScreenReferences, batching, draws| {
+            preflight_with_target(
+                snapshot,
+                runner.image_assets(),
+                references,
+                FrameBudget::new(2, 8, 100, 65_536, 16 * 1024 * 1024, draws),
+                None,
+                super::super::geometry::DesktopScreenMode::Prepared,
+                batching,
+            )
+        };
+        check(&mut references, true, 3).unwrap();
+        assert!(matches!(
+            check(&mut references, false, 3),
+            Err(ScreenPresentationError::Composition(
+                FrameComposerError::BudgetExceeded {
+                    resource: FrameBudgetResource::Passes,
+                    actual: 4,
+                    ..
+                }
+            ))
+        ));
+        assert!(matches!(
+            check(&mut references, true, 2),
+            Err(ScreenPresentationError::Composition(
+                FrameComposerError::BudgetExceeded {
+                    resource: FrameBudgetResource::DrawCalls,
+                    actual: 3,
+                    ..
+                }
+            ))
+        ));
+        Ok(())
+    }
+
     #[test]
     fn screen_image_camera_preserves_offscreen_corners_and_vertical_orientation() {
         for (width, height) in [(640.0, 360.0), (301.0, 901.0), (1.0, 1.0)] {
@@ -862,6 +988,7 @@ mod tests {
             three_d,
             Some(64),
             super::super::geometry::DesktopScreenMode::Streaming,
+            false,
         )
         .unwrap();
         assert!(matches!(
@@ -871,7 +998,8 @@ mod tests {
                 &mut referenced,
                 enough,
                 Some(64),
-                super::super::geometry::DesktopScreenMode::Streaming
+                super::super::geometry::DesktopScreenMode::Streaming,
+                false,
             ),
             Err(ScreenPresentationError::Composition(
                 FrameComposerError::BudgetExceeded {
@@ -889,7 +1017,8 @@ mod tests {
                 &mut referenced,
                 short_texture,
                 Some(64),
-                super::super::geometry::DesktopScreenMode::Streaming
+                super::super::geometry::DesktopScreenMode::Streaming,
+                false,
             ),
             Err(ScreenPresentationError::Composition(
                 FrameComposerError::BudgetExceeded {

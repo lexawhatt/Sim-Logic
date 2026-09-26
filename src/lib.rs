@@ -110,10 +110,10 @@ pub type LogicResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>
 /// Commonly used Sim;Logic and ECS types.
 pub mod prelude {
     pub use crate::bevy_ecs;
-    #[cfg(all(feature = "desktop", feature = "text"))]
-    pub use crate::desktop::DesktopTextError;
     #[cfg(feature = "desktop")]
     pub use crate::desktop::FrameCacheBudget;
+    #[cfg(all(feature = "desktop", feature = "text"))]
+    pub use crate::desktop::{DesktopTextError, DesktopTextUpdates};
     pub use bevy_ecs::prelude::{Bundle, Component, Res, ResMut, Resource, With, Without};
     #[cfg(feature = "desktop")]
     pub use sim_engine::RendererPresentMode;

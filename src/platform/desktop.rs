@@ -10,6 +10,8 @@
 mod budget_recovery;
 #[path = "desktop/capture.rs"]
 mod capture;
+#[path = "desktop/draw_plan.rs"]
+mod draw_plan;
 #[path = "desktop/geometry.rs"]
 mod geometry;
 #[path = "desktop/images.rs"]
@@ -36,7 +38,7 @@ pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
 pub use sim_engine::FrameCacheBudget;
 #[cfg(feature = "text")]
-pub use text::DesktopTextError;
+pub use text::{DesktopTextError, DesktopTextUpdates};
 pub use three_d::{DesktopThreeDError, DesktopThreeDUpdates};
 pub use timing::{DesktopGpuTimingSample, DesktopGpuTimings};
 
@@ -92,6 +94,7 @@ pub struct DesktopConfig {
     present_mode: RendererPresentMode,
     frame_cache: FrameCacheBudget,
     screen_mode: DesktopScreenMode,
+    text_batching: bool,
     gpu_timing: bool,
     window_mode: crate::window::WindowMode,
 }
@@ -105,6 +108,7 @@ impl Default for DesktopConfig {
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
             screen_mode: DesktopScreenMode::default(),
+            text_batching: true,
             gpu_timing: false,
             window_mode: crate::window::WindowMode::Windowed,
         }
@@ -112,6 +116,19 @@ impl Default for DesktopConfig {
 }
 
 impl DesktopConfig {
+    /// Groups adjacent same-atlas labels into retained glyph batches (default).
+    /// Groups contain at most 256 labels and never cross geometry or images.
+    /// Disable for the individual-run baseline. Has no effect without `text`.
+    pub fn set_text_batching(&mut self, enabled: bool) -> &mut Self {
+        self.text_batching = enabled;
+        self
+    }
+
+    /// Returns whether the native bridge groups adjacent managed labels.
+    pub const fn text_batching(&self) -> bool {
+        self.text_batching
+    }
+
     /// Chooses compact/prepared retention or the legacy streaming baseline.
     /// Set before starting the host. Scene admission still uses RenderLimits;
     /// retained resources mirror current runs, with bounded old/new overlap.
@@ -153,6 +170,7 @@ impl DesktopConfig {
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
             screen_mode: DesktopScreenMode::default(),
+            text_batching: true,
             gpu_timing: false,
             window_mode: crate::window::WindowMode::Windowed,
         })
@@ -280,6 +298,8 @@ pub struct DesktopRunReport {
     last_logic_frame: Option<LogicFrameReport>,
     last_render_frame: Option<FrameReport>,
     last_screen_updates: Option<DesktopScreenUpdates>,
+    #[cfg(feature = "text")]
+    last_text_updates: Option<DesktopTextUpdates>,
     renderer_description: Option<String>,
     last_three_d_frame: Option<Mesh3dRenderReport>,
     last_three_d_updates: Option<DesktopThreeDUpdates>,
@@ -288,6 +308,13 @@ pub struct DesktopRunReport {
 }
 
 impl DesktopRunReport {
+    /// Last successful composition's glyph-batch preparation, separate from
+    /// source label/atlas preparation and renderer frame uploads.
+    #[cfg(feature = "text")]
+    pub const fn last_text_updates(&self) -> Option<DesktopTextUpdates> {
+        self.last_text_updates
+    }
+
     /// Final adapter/backend/PCI/driver, target, DPI and presentation context.
     /// Captured once on successful exit, not formatted or allocated per frame.
     pub fn renderer_description(&self) -> Option<&str> {
@@ -622,6 +649,7 @@ impl<A: Action> DesktopHost<A> {
     ) -> Self {
         let mut images = DesktopImages::new();
         images.screen_mode = config.screen_mode;
+        images.text_batching = config.text_batching;
         Self {
             runner,
             config,
@@ -970,6 +998,10 @@ impl<A: Action> DesktopHost<A> {
         self.report.last_three_d_frame = None;
         self.report.last_three_d_updates = None;
         self.report.last_screen_updates = None;
+        #[cfg(feature = "text")]
+        {
+            self.report.last_text_updates = None;
+        }
         if extracted.three_d().is_none() {
             // A World with no active 3D view must not keep a retired World's
             // chunk revisions alive through renderer caches.
@@ -1071,6 +1103,10 @@ impl<A: Action> DesktopHost<A> {
         match presentation {
             Ok(render_report) => {
                 self.report.last_screen_updates = Some(self.images.geometry.updates);
+                #[cfg(feature = "text")]
+                {
+                    self.report.last_text_updates = Some(self.images.texts.updates);
+                }
                 self.report.gpu_timings.submitted(
                     report.frame_index(),
                     GpuTimingSource::FrameComposer,
@@ -1125,6 +1161,10 @@ impl<A: Action> DesktopHost<A> {
                             );
                             self.report.last_render_frame = None;
                             self.report.last_screen_updates = None;
+                            #[cfg(feature = "text")]
+                            {
+                                self.report.last_text_updates = None;
+                            }
                             self.report.last_three_d_frame = None;
                             self.report.last_three_d_updates = None;
                             if let Err(error) = self.three_d.restore(renderer) {
