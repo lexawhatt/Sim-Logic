@@ -1,11 +1,13 @@
-# Screen-fixed panels
+# Screen geometry and UI controls
 
 [Documentation](../README.md) / Rendering
 
 A heads-up display, or HUD, is information drawn over the scene without moving
-with its camera. `ScreenRectangleVisual` is the first small building block for
-that: a filled rectangle for a status panel, progress bar, or pause indicator.
-It is not a general UI toolkit.
+with its camera. Screen visuals include rectangles, circles, lines and open
+styled paths, with shared ordering and clipping. Pointer-button and keyboard
+focus helpers connect them to application policy; this is not a general layout
+or widget toolkit. Start with `ScreenRectangleVisual` for a status panel,
+progress bar or pause indicator.
 
 Try the complete [screen_hud example](../../examples/screen_hud/main.rs):
 
@@ -394,8 +396,10 @@ resources. Shared paths count points per source occurrence for work limits.
 One path is one Engine scene command, not a promise of one GPU draw for any
 style. Prepared desktop runs reuse unchanged tessellation/uploads; Compact
 routes paths and circle outlines through ordinary prepared geometry. CPU
-extraction still rebuilds Engine scene commands each frame. Incremental CPU
-extraction has **not** been implemented by adding this component.
+extraction also reuses exact unchanged screen snapshots and geometry runs.
+Changed geometry still requires complete aggregate validation; this is not a
+general per-component dirty-patching system. See the reuse controls and
+`ScreenExtractionUpdates` diagnostics earlier in this guide.
 
 `ScreenCircleVisual::outlined(center, radius, width, color)` creates a true
 stroke-only circle, with no transparent fill disk. Its pointer test uses the

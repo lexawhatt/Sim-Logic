@@ -45,10 +45,12 @@ remove its rebuildable development/test artifacts while keeping release builds:
 
 ```bash
 du -sh target
-cargo clean --profile dev
+cargo clean -p sim-logic --profile dev
 ```
 
-Nothing cleans automatically during compilation or application startup.
+This removes this package's development/test products, not shared dependency
+artifacts or release binaries. Nothing cleans automatically during compilation
+or application startup.
 Keep one feature combination while iterating, then run broader checks before
 delivery. Use `cargo check` when linking/running a binary is not needed.
 
@@ -129,3 +131,37 @@ instrument in `examples/piano_roll`. `music.rs` owns sample-clock state;
 The generic cuboid bridge lives in `rendering/three_d`; its retained GPU
 resources live in `platform/desktop/three_d.rs`. Original bitmap glyphs shared
 by the two larger examples live in `examples/support/bitmap_font.rs`.
+
+## Checks and measurements
+
+[Release checks](Releasing.md) describe the test, feature, documentation and
+package gates. For focused CPU measurements, use the repository's benchmarks:
+
+```bash
+cargo bench --no-default-features --bench headless_runtime
+cargo bench --no-default-features --bench headless_runtime -- --motion-only
+cargo bench --no-default-features --features text --bench screen_text
+```
+
+The headless benchmark separates timing from allocator counting. Its focused
+selectors are defined in [the benchmark entry point](../../benches/headless_runtime.rs):
+
+| Area | Selectors |
+| --- | --- |
+| Motion | `--motion-only`, `--acceleration-motion-only`, `--digital-motion-only` |
+| Overlap | `--overlap-only`, `--rectangle-overlap-only`, `--mixed-overlap-only` |
+| Structural Commands | `--insert-only`, `--remove-only`, `--enablement-only`, `--exit-only` |
+| Input/UI | `--pointer-only`, `--input-cancellation-only`, `--buttons-only` |
+| Extraction | `--visual-only`, `--images-only` |
+
+Warmed zero-allocation gates apply only to their named workloads and fixed
+capacities, not arbitrary application Systems. The insert gate deliberately
+counts the boxed payload allocation per queued insert. Overlap measurements
+include repeated linear scans; they are not evidence of a spatial broad phase.
+Timing is diagnostic, without a machine-independent frame-rate threshold.
+
+The [text guide](../rendering/Text.md), [audio guide](../guides/Audio-Output.md)
+and example guides describe their own benchmarks. CPU headless results exclude
+native event delivery, surface acquisition and GPU work. Compare desktop runs
+on the same source, workload, adapter, surface format and presentation mode;
+keep acquisition and GPU diagnostics separate from CPU extraction time.

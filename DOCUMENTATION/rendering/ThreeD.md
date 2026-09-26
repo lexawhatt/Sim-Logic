@@ -204,7 +204,7 @@ there is no unbounded edit-history chain. Install an edited image with
 `texture.with_asset(revised_asset)` and `visual.set_texture`.
 
 `TextureVisual3d::texel_bytes()` reports nominal RGBA8 bytes for the complete
-mip chain. Engine 0.4.1 region updates upload mip zero's dirty rectangle and
+mip chain. Engine's region updates upload mip zero's dirty rectangle and
 regenerate/upload only affected rectangles in lower levels. Full CPU recovery
 copies and opacity scans remain; detaching immutable GPU aliases still copies
 the shared texture. Smaller uploads do not mean the entire update is local or
@@ -233,7 +233,7 @@ initial creation, material-only replacements and composition uploads. The
 last preparation is available separately through `last_three_d_updates()`.
 These counters are not whole-frame allocation or universal FPS measurements.
 
-Engine 0.4.1 reuses preparation storage, skips unchanged uniform uploads, and
+Engine reuses preparation storage, skips unchanged uniform uploads, and
 can batch adjacent compatible Opaque/Mask instances without changing their
 order. `draw_call_count()` reports encoded draws, not object count; a smaller
 count does not imply missing objects. The managed bridge leaves Engine's new
@@ -245,9 +245,10 @@ Device recovery restores whole scenes, keeping object IDs, reserved geometry
 capacity, texture revisions and material settings. Targets are recreated for
 the new device. Pending timing associations are cleared, not reassigned to
 new-device frames. Engine 0.4.0 includes the fix for the earlier standalone
-textured `restore_mesh3d` material regression. The manual consumer test passes
-on Engine 0.4.1 with NVIDIA/Vulkan and the original assertions; this is not
-Intel qualification.
+textured `restore_mesh3d` material regression. The standalone consumer and managed
+3D cache/recovery tests were rerun on Engine 0.4.2 with NVIDIA/Vulkan during
+0.1.0 preparation. This is not Intel or Windows qualification, nor a full
+visual review of every example.
 The bridge keeps whole-scene recovery for shared-resource deduplication.
 
 ## Geometry, camera, and view switching
@@ -315,7 +316,7 @@ order may differ after mesh edits or new insertions. Do not rely on exact
 coplanar surfaces having a useful visual winner.
 
 Desktop composition is: 2D World, then the full-viewport 3D target,
-then ordered screen rectangles and images. Opaque target pixels cover the
+then ordered screen geometry, images and text. Opaque target pixels cover the
 World beneath them; transparent target pixels compose over it. 2D World objects
 do not share its depth buffer. Screen
 overlays retain their existing mixed layer/depth/entity ordering and remain
@@ -331,7 +332,7 @@ already submitted work immediately. Background changes update the retained
 scene in place without rebuilding its metadata or resources.
 
 The adapter caches each slot's last applied transform, style, and visibility,
-so unchanged fields do not call Engine setters. Engine 0.3 uses indexed object
+so unchanged fields do not call Engine setters. Engine uses indexed object
 IDs for changed fields. This removes the former linear ID search, but does
 not claim that an entire scene update or GPU frame is constant-time. A slot's
 managed source is refreshed even when a different entity has identical geometry.

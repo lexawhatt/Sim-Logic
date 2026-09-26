@@ -6,6 +6,20 @@ rust-version = "1.95"
 description = "A code-first application and logic layer for Sim;Engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/lexawhatt/Sim-Logic"
+readme = "README.md"
+documentation = "https://docs.rs/sim-logic"
+keywords = ["ecs", "simulation", "game", "graphics", "application"]
+categories = ["game-engines", "simulation", "graphics"]
+include = [
+    "/src/**", "/examples/**", "/tests/**", "/benches/**",
+    "/DOCUMENTATION/**", "/scripts/*.py", "/scripts/*.sh", "/Cargo.toml", "/Cargo.lock",
+    "/README.md", "/CHANGELOG.md", "/LICENSE-*",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
 
 [features]
 default = ["desktop"]
@@ -35,22 +49,27 @@ incremental = false
 
 [[example]]
 name = "moving_ball"
+path = "examples/moving_ball/main.rs"
 required-features = ["desktop"]
 
 [[example]]
 name = "projectile_arena"
+path = "examples/projectile_arena/main.rs"
 required-features = ["desktop"]
 
 [[example]]
 name = "coin_pickup"
+path = "examples/coin_pickup/main.rs"
 required-features = ["desktop"]
 
 [[example]]
 name = "camera_follow"
+path = "examples/camera_follow/main.rs"
 required-features = ["desktop"]
 
 [[example]]
 name = "persistent_score"
+path = "examples/persistent_score/main.rs"
 required-features = ["desktop"]
 
 [[example]]

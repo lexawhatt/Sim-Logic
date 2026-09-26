@@ -11,9 +11,10 @@ Enable audio independently of the desktop renderer:
 
 ```toml
 [dependencies]
-sim-logic = { path = "../Sim-Logic", default-features = false, features = ["audio"] }
+sim-logic = { version = "0.1.0", default-features = false, features = ["audio"] }
 ```
 
+Before the first registry release, use a checkout `path` instead of `version`.
 Keep the default features enabled as well when using the desktop application
 host. On Linux, building the output backend requires ALSA development files.
 Without the `audio` feature, the headless library does not require Rodio or

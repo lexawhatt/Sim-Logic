@@ -265,10 +265,14 @@ tint, and filtering. Images and rectangles share a screen draw order. Their
 pixels survive World replacement, and the desktop host caches prepared Engine
 images. See [screen images](../rendering/Screen-Images.md) for explicit limits and ownership.
 
-Extraction rebuilds draw plans using reusable buffers; it does not patch only
-changed components. Immutable image resources are retained separately from
-those per-frame plans. Some warmed workloads have allocation tests, but
-arbitrary application Systems are not promised to allocate nothing.
+World-space visuals are extracted into reusable frame buffers. Screen extraction
+can reuse an unchanged published source snapshot and unchanged geometry runs;
+image/text-only changes need not rebuild the aggregate geometry. A geometry edit
+still validates the complete aggregate scene, not just a dirty patch. See
+[screen extraction reuse](../rendering/Screen-HUD.md) for the cache modes and
+diagnostics. Immutable assets are retained separately from per-frame plans.
+Some warmed workloads have allocation tests, but arbitrary application Systems
+are not promised to allocate nothing.
 
 `FrameOutcome::Rejected` means frame inputs were refused before the frame
 changed live state. `FrameOutcome::Advanced` means it started; inspect its

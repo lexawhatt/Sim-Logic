@@ -4,7 +4,8 @@ Sim;Logic supplies the application loop, objects, input and update order.
 Sim;Engine draws the result. Your application owns its game rules, scientific
 models or other domain logic; rendered state is not the model itself.
 
-These guides describe the current experimental API, which can still change.
+These guides describe the 0.1 API. It is pre-1.0: future minor releases may
+contain documented breaking changes.
 
 ## Start here
 
@@ -15,6 +16,10 @@ a desktop example to testing the same application without a window.
 
 - [Runtime](guides/Runtime.md): entities, Systems, Commands, fixed time,
   interpolation, pause and World replacement.
+- [Entities and resources](guides/Entities-and-Resources.md): spawning, deferred
+  edits, enable/disable, shared state and typed events.
+- [Movement and collision](guides/Movement-and-Collision.md): keyboard movement,
+  velocity, acceleration, camera following and overlap queries.
 - [Input](guides/Pointer-Input.md): keys and mouse buttons, click-time positions,
   screen-to-world coordinates and cancellation on focus loss.
 - [Audio output](guides/Audio-Output.md): optional device output, its lifetime,
@@ -43,6 +48,8 @@ on individual features. Their catalog is in [getting started](Getting-Started.md
 ## Working on the library
 
 [Code layout](internals/Code-Layout.md) explains where the implementation lives.
+[Release checks](internals/Releasing.md) cover the feature matrix, package
+contents, documentation and manual desktop acceptance.
 For exact signatures and error contracts, build the API reference:
 
 ```bash
@@ -63,5 +70,5 @@ The current Engine dependency is the official `0.4.2` release from crates.io,
 pinned exactly. The guides distinguish supported paths from remaining test gaps.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been
-checked on Linux/Vulkan, not every platform. For the product overview and
-individual helper recipes, see the [repository README](../README.md).
+checked on Linux/Vulkan, not every platform. The [repository README](../README.md)
+is the short product overview; the topic guides hold the detailed recipes.

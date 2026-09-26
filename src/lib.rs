@@ -4,6 +4,26 @@
 //! systems, bounded structural spawn/insert/remove/despawn commands, typed input, fixed-step time,
 //! application-owned resources, World replacement, application-requested exit,
 //! and extraction into Sim;Engine scenes.
+//!
+//! # Where to start
+//!
+//! Use [`prelude`] for application setup, then [`app::Application`] to register
+//! World factories and Systems. [`headless::HeadlessRunner`] advances the same
+//! runtime without a window or GPU. See the [usage guides](https://github.com/lexawhatt/Sim-Logic/tree/master/DOCUMENTATION)
+//! for a complete headless program and desktop examples.
+//!
+//! # Optional features
+//!
+//! - `desktop` (default): window hosting and the Sim;Engine GPU bridge.
+//! - `fonts`: CPU font loading, shaping and rasterization through Engine.
+//! - `headless-text`: managed CPU text preparation, including `fonts`.
+//! - `text`: retained GPU text, including `headless-text` but not window hosting.
+//! - `audio`: single-source device output through Rodio.
+//! - `easter-eggs`: the bundled Ferris image helper.
+//!
+//! Disable default features for the core headless runtime. Systems execute
+//! sequentially; only one World is active. Domain models, gameplay, layout and
+//! collision response remain application code, not renderer state.
 
 #![warn(missing_docs)]
 

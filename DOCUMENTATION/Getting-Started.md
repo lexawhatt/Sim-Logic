@@ -23,7 +23,7 @@ The Enter policy runs during fixed updates. It therefore does nothing while
 paused, and a successful fixed-stage replacement skips that frame's Space
 policy. These choices belong to the example, not to the physical keys.
 
-The complete setup is in [moving_ball.rs](../examples/moving_ball.rs). Other
+The complete setup is in [moving_ball/main.rs](../examples/moving_ball/main.rs). Other
 examples cover individual features or combine them into a small game:
 
 | Example | What it shows |
@@ -48,14 +48,16 @@ Run any of them with `cargo run --release --example <name>`.
 
 ## A complete headless program
 
-For a separate Cargo project next to the `Sim-Logic` checkout, add:
+For a separate Cargo project, add this dependency for the 0.1.0 release:
 
 ```toml
 [dependencies]
-sim-logic = { path = "../Sim-Logic", default-features = false }
+sim-logic = { version = "0.1.0", default-features = false }
 ```
 
-Adjust the path if the checkout lives elsewhere. Copy this complete program
+Until that version is published, replace `version = "0.1.0"` with
+`path = "../Sim-Logic"`, adjusted to your checkout's location.
+Copy this complete program
 into `src/main.rs` and run `cargo run`. It feeds one D-key press into the same
 runtime used by the desktop host, then checks that the ball moved:
 
@@ -136,7 +138,7 @@ Enable the default features in your dependency, keep the setup through
 `app.add_digital_movement2d_system()`, and replace the headless driver with
 `app.run(initial)?;`. The desktop host collects input and measures time for
 you. Add explicit pause and exit Systems if wanted; the
-[Moving Ball example](../examples/moving_ball.rs) shows both.
+[Moving Ball example](../examples/moving_ball/main.rs) shows both.
 
 For the repository's headless tests:
 

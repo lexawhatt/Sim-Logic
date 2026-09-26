@@ -358,6 +358,7 @@ with desktop enabled, `DesktopRunError::Pointer`.
 For explicit press/release ownership, use the small
 [pointer-button helper](../rendering/Screen-HUD.md#buttons-and-local-input-ownership).
 It uses these source/cancellation fields and caller-selected rectangle hits.
-It does not consume these snapshots or add an OS pointer grab. Wheel, touch,
-pen, text entry and UI keyboard focus are not implemented. Drawing a
-`ScreenRectangleVisual` alone still does not capture input.
+It does not consume these snapshots or add an OS pointer grab. Wheel input
+and explicit keyboard-focus helpers are available, but their routing remains
+application policy. Touch, pen and text entry/IME are not implemented.
+Drawing a `ScreenRectangleVisual` alone still does not capture input.

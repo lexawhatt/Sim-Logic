@@ -1,4 +1,3 @@
-#[path = "projectile_arena/game.rs"]
 mod game;
 
 fn main() -> sim_logic::LogicResult {

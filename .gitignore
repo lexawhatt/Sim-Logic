@@ -1,5 +1,6 @@
 /target
 /tests/consumers/budget_api/Cargo.lock
+/scripts/__pycache__/
 /.idea
 /TargetProdDocs
 /Workflow

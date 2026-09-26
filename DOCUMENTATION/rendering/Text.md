@@ -110,7 +110,8 @@ shares immutable storage; changing one clone does not change another.
 Text joins [panels](Screen-HUD.md) and [images](Screen-Images.md) in the same
 screen draw plan. Lower layer/depth draws first; stable entity identity breaks
 ties. On the same entity with identical layer and depth, the order is
-rectangle, image, then text. Other entities still follow normal entity order.
+rectangle, line, circle, open path, image, then text. Other entities still
+follow normal entity order.
 All screen content follows World content. Disabled entities contribute no
 text source. Visibility does not capture input or provide hit testing.
 
