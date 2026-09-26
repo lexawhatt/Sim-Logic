@@ -28,6 +28,7 @@ use screen::ScreenExtractionBuffer;
 pub(crate) use screen::ScreenTextSource;
 pub use screen::{
     ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
+    ScreenExtractionUpdates,
 };
 pub(crate) use screen::{ScreenImageSource, ScreenRectangleSource, ScreenSource};
 
@@ -239,6 +240,12 @@ pub(crate) struct ExtractionBuffers {
 }
 
 impl ExtractedFrame {
+    /// CPU screen work for this snapshot, independent of native GPU preparation.
+    /// Complete-frame publication uses two alternating buffers; each warms its
+    /// own exact-value cache. World geometry/interpolation are not cached here.
+    pub const fn screen_extraction_updates(&self) -> ScreenExtractionUpdates {
+        self.storage.screen.updates
+    }
     /// Returns the World generation from which this snapshot was extracted.
     pub const fn world_generation(&self) -> WorldGeneration {
         self.world_generation
@@ -940,7 +947,6 @@ fn extract_frame_into(
     storage.resolved_rectangles.clear();
     storage.resolved_lines.clear();
     storage.world_scene.clear();
-    storage.screen.clear();
     storage.three_d.clear();
 
     if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {

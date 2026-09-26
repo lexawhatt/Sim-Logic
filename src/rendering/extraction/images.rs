@@ -67,7 +67,7 @@ impl ResolvedScreenImage {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ScreenImageSource {
     entity: LogicEntity,
     visual: ScreenImageVisual,

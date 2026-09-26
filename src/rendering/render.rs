@@ -168,6 +168,7 @@ impl Default for FrameLimits {
 /// the desktop compositor applies FrameLimits to their combined presentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderLimits {
+    screen_scene_reuse: bool,
     max_world_circles: usize,
     max_world_rectangles: usize,
     max_world_lines: usize,
@@ -202,6 +203,7 @@ impl RenderLimits {
         frame_limits: FrameLimits,
     ) -> Self {
         Self {
+            screen_scene_reuse: true,
             max_world_circles,
             max_world_rectangles: DEFAULT_MAX_WORLD_RECTANGLES,
             max_world_lines: DEFAULT_MAX_WORLD_LINES,
@@ -222,6 +224,20 @@ impl RenderLimits {
             frame_limits,
             three_d: ThreeDRenderLimits::new(0, 0, 0),
         }
+    }
+
+    /// Whether exact validated screen snapshots/sub-runs may be reused on CPU.
+    /// Enabled by default; independent of desktop GPU retention and interpolation.
+    pub const fn screen_scene_reuse(self) -> bool {
+        self.screen_scene_reuse
+    }
+
+    /// Disables/enables CPU screen reuse for diagnostics with the same budgets.
+    /// Disabled mode reconstructs scenes without relaxing any checks. This does
+    /// not disable native Prepared/Compact retention or change rendered semantics.
+    pub const fn with_screen_scene_reuse(mut self, enabled: bool) -> Self {
+        self.screen_scene_reuse = enabled;
+        self
     }
 
     /// Returns the maximum number of extracted world circles.

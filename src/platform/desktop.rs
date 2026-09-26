@@ -298,6 +298,7 @@ pub struct DesktopRunReport {
     last_logic_frame: Option<LogicFrameReport>,
     last_render_frame: Option<FrameReport>,
     last_screen_updates: Option<DesktopScreenUpdates>,
+    last_screen_extraction: Option<crate::ScreenExtractionUpdates>,
     #[cfg(feature = "text")]
     last_text_updates: Option<DesktopTextUpdates>,
     renderer_description: Option<String>,
@@ -324,6 +325,14 @@ impl DesktopRunReport {
     /// include uploads even when subsequent surface acquisition skipped.
     pub const fn last_screen_updates(&self) -> Option<DesktopScreenUpdates> {
         self.last_screen_updates
+    }
+
+    /// CPU screen collection/reconstruction work from the last successfully
+    /// extracted logical frame, separate from native preparation/upload counters.
+    /// Rejection or exit without extraction preserves these diagnostic counters;
+    /// they are not proof that the most recent logical frame was presented.
+    pub const fn last_screen_extraction(&self) -> Option<crate::ScreenExtractionUpdates> {
+        self.last_screen_extraction
     }
     /// Returns explicitly recoverable budget-rejected frames, not surface skips.
     pub const fn budget_rejections(&self) -> u64 {
@@ -928,6 +937,14 @@ impl<A: Action> DesktopHost<A> {
                 .with_window_controls(|controls| window::synchronize(window, controls));
         }
         self.report.logic_frames = self.report.logic_frames.saturating_add(1);
+        if let Some(updates) = report.extracted_generation().and_then(|generation| {
+            self.runner
+                .extracted_frame()
+                .filter(|frame| frame.world_generation() == generation)
+                .map(crate::ExtractedFrame::screen_extraction_updates)
+        }) {
+            self.report.last_screen_extraction = Some(updates);
+        }
         if matches!(report.transition(), FrameTransition::Committed { .. }) {
             self.report.committed_transitions = self.report.committed_transitions.saturating_add(1);
         }

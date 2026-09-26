@@ -3,6 +3,83 @@ use sim_logic::{bevy_ecs::entity_disabling::Disabled, prelude::*};
 use std::time::Duration;
 
 #[test]
+fn text_edits_reuse_geometry_and_then_warm_both_atomic_snapshots() -> LogicResult {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    };
+    let phase = Arc::new(AtomicU8::new(0));
+    let drive = Arc::clone(&phase);
+    let mut app = application(limits(1, 128, 64))?;
+    let label = label(font(&mut app)?, "Warm", 10.0)?;
+    app.add_fallible_frame_system(
+        move |mut labels: Query<&mut ScreenTextVisual>| -> LogicResult {
+            let phase = drive.load(Ordering::Relaxed);
+            for mut label in &mut labels {
+                label.set_text(if phase == 2 { "Changed" } else { "Warm" })?;
+                label.set_position(LogicalScreenPosition::new(10.0 + f32::from(phase), 40.0))?;
+                label.set_layer(Layer::new(if phase == 3 { -1 } else { 1 }));
+                label.set_clip(if phase == 4 {
+                    ScreenClip::Empty
+                } else {
+                    ScreenClip::Unclipped
+                });
+            }
+            Ok(())
+        },
+    );
+    let camera = ActiveCamera2d::centered(1.0)?;
+    let rectangle = ScreenRectangleVisual::new(
+        LogicalScreenPosition::new(0.0, 0.0),
+        LogicalScreenVector::new(100.0, 80.0),
+        Color::WHITE,
+    )?;
+    let initial = app.register_world("text cache", move |world| {
+        world.spawn(camera)?;
+        world.spawn(label.clone())?;
+        world.spawn(rectangle)?;
+        Ok(())
+    })?;
+    let mut runner = app.build_headless(initial)?;
+    runner.set_paused(true);
+    for value in [0, 1, 2, 3, 4, 0] {
+        phase.store(value, Ordering::Relaxed);
+        for repeat in 0..4 {
+            let report = advance(&mut runner, Duration::ZERO, &[])?;
+            assert!(report.failure().is_none());
+            let current = snapshot(&runner)?;
+            let work = current.screen_extraction_updates();
+            if value != 0 || repeat >= 2 {
+                assert!(
+                    work.reused_scene,
+                    "text must not rebuild invariant geometry"
+                );
+            }
+            if repeat >= 2 {
+                assert!(work.reused_snapshot);
+                assert_eq!(work.rebuilt_runs, 0);
+            }
+            let text = &current.resolved_screen_texts()[0];
+            assert_eq!(text.position().to_vec2().x(), 10.0 + f32::from(value));
+            assert_eq!(text.text(), if value == 2 { "Changed" } else { "Warm" });
+            assert_eq!(
+                text.visual().clip(),
+                if value == 4 {
+                    ScreenClip::Empty
+                } else {
+                    ScreenClip::Unclipped
+                }
+            );
+            assert_eq!(
+                matches!(current.screen_draws()[0], ScreenDraw::Text { .. }),
+                value == 3
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn foreign_font_rejects_active_sources_but_not_disabled_sources() -> LogicResult {
     let foreign = font(&mut application(limits(2, 128, 64))?)?;
     for disabled in [false, true] {

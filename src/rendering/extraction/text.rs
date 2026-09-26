@@ -72,7 +72,7 @@ impl ResolvedScreenText {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ScreenTextSource {
     entity: LogicEntity,
     visual: ScreenTextVisual,

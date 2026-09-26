@@ -6,7 +6,7 @@ use sim_engine::{Color, SceneBudget, ScreenScene};
 
 use super::{
     super::{ExtractionError, compare_visual_order},
-    ScreenExtractionBuffer,
+    ResolvedScreenPrimitive, ScreenExtractionBuffer,
 };
 
 /// One ordered screen source, after all world content.
@@ -51,6 +51,7 @@ pub(super) struct RectangleRun {
     pub(super) start: usize,
     pub(super) end: usize,
     pub(super) scene: ScreenScene,
+    pub(super) records: Vec<ResolvedScreenPrimitive>,
 }
 
 impl ScreenExtractionBuffer {
@@ -178,6 +179,17 @@ impl ScreenExtractionBuffer {
         budget: SceneBudget,
     ) -> Result<(), ExtractionError> {
         let count = end - start;
+        if self.runs.get(index).is_some_and(|run| {
+            run.records
+                .iter()
+                .cloned()
+                .eq((start..end).filter_map(|position| self.geometry(position)))
+        }) {
+            self.runs[index].start = start;
+            self.runs[index].end = end;
+            self.updates.reused_runs += 1;
+            return Ok(());
+        }
         // Replacing a scene whenever its run length changes prevents each slot
         // retaining its historical largest partition. The command cap bounds
         // content, not allocator slack; Engine still enforces Scene byte caps.
@@ -199,23 +211,38 @@ impl ScreenExtractionBuffer {
                 })?;
             let scene = ScreenScene::with_budget(Color::TRANSPARENT, run_budget)
                 .map_err(ExtractionError::ScreenScene)?;
-            self.runs.push(RectangleRun { start, end, scene });
+            self.runs.push(RectangleRun {
+                start,
+                end,
+                scene,
+                records: Vec::new(),
+            });
         } else if self.runs[index].end - self.runs[index].start != count {
             // Construction is empty; dropping the previous scene releases its
             // command storage before the changed partition is populated.
             self.runs[index].scene = ScreenScene::with_budget(Color::TRANSPARENT, run_budget)
                 .map_err(ExtractionError::ScreenScene)?;
+            self.runs[index].records = Vec::new();
         }
         self.runs[index].start = start;
         self.runs[index].end = end;
         self.runs[index].scene.clear();
+        self.runs[index].records.clear();
+        self.runs[index]
+            .records
+            .try_reserve_exact(count)
+            .map_err(|_| ExtractionError::AllocationFailed {
+                requested_bytes: count.saturating_mul(size_of::<ResolvedScreenPrimitive>()),
+            })?;
         for position in start..end {
             if let Some(primitive) = self.geometry(position) {
                 primitive
                     .append(&mut self.runs[index].scene)
                     .map_err(ExtractionError::ScreenScene)?;
+                self.runs[index].records.push(primitive);
             }
         }
+        self.updates.rebuilt_runs += 1;
         Ok(())
     }
 }

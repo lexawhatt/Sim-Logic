@@ -18,6 +18,7 @@ const RECTANGLES: i32 = 64;
 #[derive(Clone, Copy, Default)]
 struct AllocationProbe {
     active: bool,
+    allocations: usize,
     retained_delta: isize,
     failure_size: usize,
     remaining_matches: usize,
@@ -29,6 +30,7 @@ thread_local! {
     // The test harness and any other threads always use the normal allocator.
     static PROBE: Cell<AllocationProbe> = const { Cell::new(AllocationProbe {
         active: false,
+        allocations: 0,
         retained_delta: 0,
         failure_size: 0,
         remaining_matches: 0,
@@ -69,6 +71,10 @@ fn should_fail(size: usize) -> bool {
     PROBE
         .try_with(|probe| {
             let mut state = probe.get();
+            if state.active {
+                state.allocations += 1;
+                probe.set(state);
+            }
             if !state.active || size != state.failure_size || state.remaining_matches == 0 {
                 return false;
             }
@@ -79,6 +85,54 @@ fn should_fail(size: usize) -> bool {
             fail
         })
         .unwrap_or(false)
+}
+
+#[test]
+fn warm_ten_thousand_point_snapshot_does_not_allocate_or_rebuild() -> LogicResult {
+    let points: Vec<_> = (0..10_000)
+        .map(|i| LogicalScreenPosition::new(i as f32 * 0.25, 40.5))
+        .collect();
+    let path = ScreenPolylineVisual::new(&points, StrokeStyle2d::new(1.5, Color::WHITE))?;
+    let mut config = AppConfig::default();
+    config.set_render_limits(
+        RenderLimits::default().with_screen_scene_budget(SceneBudget::new(
+            256,
+            10_000,
+            2_000_000,
+            8 * 1024 * 1024,
+            16 * 1024 * 1024,
+            128 * 1024 * 1024,
+            256,
+        )),
+    );
+    let mut app = Application::<u8>::new(config)?;
+    let camera = ActiveCamera2d::centered(1.0)?;
+    let initial = app.register_world("warm path", move |world| {
+        world.spawn(camera)?;
+        world.spawn(path.clone())?;
+        Ok(())
+    })?;
+    let mut runner = app.build_headless(initial)?;
+    let viewport = LogicalViewport::new(640.0, 360.0)?;
+    for _ in 0..4 {
+        advance(&mut runner, viewport);
+    }
+    for _ in 0..20 {
+        let (outcome, probe) = probe_allocations(0, 0, || advance(&mut runner, viewport));
+        let FrameOutcome::Advanced(report) = outcome else {
+            panic!("frame rejected");
+        };
+        assert!(report.failure().is_none());
+        assert_eq!(probe.allocations, 0, "warmed headless frame allocated");
+        let work = runner
+            .extracted_frame()
+            .unwrap()
+            .screen_extraction_updates();
+        assert!(work.reused_snapshot && work.reused_scene);
+        assert_eq!(work.rebuilt_runs, 0);
+        assert_eq!(work.compared_sources, 1);
+    }
+    Ok(())
 }
 
 fn record_bytes(delta: isize) {

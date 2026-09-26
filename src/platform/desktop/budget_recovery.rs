@@ -7,6 +7,10 @@ use crate::{
 };
 use sim_engine::{FrameBudgetResource, FrameComposerError, SceneError};
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "budget_recovery_gpu.rs"]
+mod gpu;
+
 pub(super) fn logical(
     report: &LogicFrameReport,
     generation: WorldGeneration,

@@ -144,8 +144,28 @@ The desktop host defaults to `DesktopScreenMode::Prepared`. It retains each
 contiguous screen geometry run and compares exact source identities and values.
 An unchanged run performs no new tessellation or geometry upload. Editing one
 run rebuilds that run, not other runs. Changes that split/reorder runs may
-invalidate more than one. CPU extraction still validates, sorts and constructs
-the snapshot each frame; this is not an incremental ECS extraction cache.
+invalidate more than one.
+
+CPU extraction also keeps exact source proofs. Once both atomic publication
+buffers are warm, identical source identities/values skip collection, sorting
+and Engine scene reconstruction. Only moving/recolouring labels or images can
+reuse the aggregate geometry scene and unchanged mixed geometry runs. Editing
+geometry rebuilds the aggregate validation scene and only changed mixed runs.
+This still scans current sources; it is not an O(1) ECS change index, and a changed
+large curve may require comparing/validating its points. No hash collision or
+user-supplied version can bless stale content. Source limits, registered assets,
+World generation and publication failure atomicity remain enforced.
+
+`ExtractedFrame::screen_extraction_updates()` reports compared sources, whole
+snapshot/scene reuse, rebuilt/reused mixed runs and retained comparison metadata.
+The byte counter covers one publication buffer's keys, scratch and run records;
+it excludes shared payloads and Engine scenes, not total application memory.
+`DesktopRunReport::last_screen_extraction()` retains these counters from the last
+successful extraction, which may precede the last rejection or exit and is not
+itself proof of a present. For same-workload CPU comparisons, disable only this
+cache with `RenderLimits::with_screen_scene_reuse(false)`; native Prepared/Compact
+selection remains independent. A rejected extraction invalidates its spare
+proof and is retried normally without replacing the last published snapshot.
 
 `DesktopConfig::set_screen_mode` also accepts `Streaming` for paired baseline
 measurements and opt-in `Compact`. Compact uses Engine's analytic filled circles,

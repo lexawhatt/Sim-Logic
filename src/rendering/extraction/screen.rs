@@ -13,6 +13,10 @@ use crate::{
 
 use super::{ExtractionError, compare_visual_order};
 
+#[path = "screen_cache.rs"]
+mod cache;
+pub use cache::ScreenExtractionUpdates;
+
 #[path = "images.rs"]
 mod images;
 pub use images::ResolvedScreenImage;
@@ -32,7 +36,7 @@ pub use composition::ScreenDraw;
 mod primitives;
 pub use primitives::ResolvedScreenPrimitive;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ScreenSource {
     Rectangle(ScreenRectangleSource),
     Line(LogicEntity, crate::screen::ScreenLineVisual),
@@ -97,7 +101,7 @@ impl ResolvedScreenRectangle {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ScreenRectangleSource {
     entity: LogicEntity,
     visual: ScreenRectangleVisual,
@@ -121,6 +125,10 @@ pub(super) struct ScreenExtractionBuffer {
     texts: Vec<ResolvedScreenText>,
     draws: Vec<ScreenDraw>,
     runs: Vec<RectangleRun>,
+    source_keys: Vec<ScreenSource>,
+    source_scratch: Vec<ScreenSource>,
+    cache_scope: Option<(WorldGeneration, RenderLimits)>,
+    pub(super) updates: ScreenExtractionUpdates,
 }
 
 impl ScreenExtractionBuffer {
@@ -133,15 +141,27 @@ impl ScreenExtractionBuffer {
             texts: Vec::new(),
             draws: Vec::new(),
             runs: Vec::new(),
+            source_keys: Vec::new(),
+            source_scratch: Vec::new(),
+            cache_scope: None,
+            updates: ScreenExtractionUpdates::default(),
             scene: ScreenScene::with_budget(Color::TRANSPARENT, limits.screen_scene_budget())
                 .map_err(ExtractionError::ScreenScene)?,
         })
     }
 
     pub(super) fn clear(&mut self) {
+        self.cache_scope = None;
+        self.source_keys.clear();
+        self.source_scratch.clear();
+        self.clear_sources();
+        self.scene.clear();
+        self.runs.clear();
+    }
+
+    fn clear_sources(&mut self) {
         self.resolved.clear();
         self.primitives.clear();
-        self.scene.clear();
         self.images.clear();
         #[cfg(feature = "headless-text")]
         self.texts.clear();
@@ -248,7 +268,7 @@ impl ScreenExtractionBuffer {
         &self.scene
     }
 
-    pub(super) fn extract(
+    fn collect_sources(
         &mut self,
         generation: WorldGeneration,
         limits: RenderLimits,
@@ -264,6 +284,7 @@ impl ScreenExtractionBuffer {
         #[cfg(feature = "headless-text")]
         let mut text_glyphs = 0usize;
         for source in sources {
+            let key = source.clone();
             let source = match source {
                 ScreenSource::Rectangle(source) => source,
                 ScreenSource::Polyline(entity, visual) => {
@@ -299,6 +320,7 @@ impl ScreenExtractionBuffer {
                         limits.max_screen_polylines(),
                         limits.screen_scene_budget().max_commands(),
                     )?;
+                    self.remember_source(key)?;
                     continue;
                 }
                 ScreenSource::Line(entity, visual) => {
@@ -314,6 +336,7 @@ impl ScreenExtractionBuffer {
                         limits.max_screen_lines(),
                         limits.screen_scene_budget().max_commands(),
                     )?;
+                    self.remember_source(key)?;
                     continue;
                 }
                 ScreenSource::Circle(entity, visual) => {
@@ -329,6 +352,7 @@ impl ScreenExtractionBuffer {
                         limits.max_screen_circles(),
                         limits.screen_scene_budget().max_commands(),
                     )?;
+                    self.remember_source(key)?;
                     continue;
                 }
                 ScreenSource::Image(source) => {
@@ -344,6 +368,7 @@ impl ScreenExtractionBuffer {
                             requested_bytes: size_of::<ResolvedScreenImage>(),
                         })?;
                     self.images.push(image);
+                    self.remember_source(key)?;
                     continue;
                 }
                 #[cfg(feature = "headless-text")]
@@ -384,6 +409,7 @@ impl ScreenExtractionBuffer {
                             requested_bytes: size_of::<ResolvedScreenText>(),
                         })?;
                     self.texts.push(text);
+                    self.remember_source(key)?;
                     continue;
                 }
             };
@@ -426,6 +452,7 @@ impl ScreenExtractionBuffer {
                 source: source.entity,
                 visual: source.visual,
             });
+            self.remember_source(key)?;
         }
         self.resolved.sort_unstable_by(|left, right| {
             compare_visual_order(
@@ -472,13 +499,6 @@ impl ScreenExtractionBuffer {
                 .then_with(|| a.kind_order().cmp(&b.kind_order()))
             });
         }
-        for index in 0..self.geometry_len() {
-            if let Some(primitive) = self.geometry(index) {
-                primitive
-                    .append(&mut self.scene)
-                    .map_err(ExtractionError::ScreenScene)?;
-            }
-        }
         self.images.sort_unstable_by(|left, right| {
             compare_visual_order(
                 left.layer(),
@@ -500,7 +520,6 @@ impl ScreenExtractionBuffer {
                 right.source(),
             )
         });
-        self.compose(limits.screen_scene_budget())?;
         Ok(())
     }
 

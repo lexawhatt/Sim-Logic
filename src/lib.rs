@@ -90,6 +90,7 @@ pub use extraction::ResolvedScreenText;
 pub use extraction::{
     ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
     ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
+    ScreenExtractionUpdates,
 };
 pub use sim_engine::{
     Layer, SceneBudget, SceneBudgetResource, SceneError, Stroke, StrokeCap2d, StrokeDashPattern2d,
@@ -206,6 +207,7 @@ pub mod prelude {
     pub use crate::{
         ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
         ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
+        ScreenExtractionUpdates,
     };
     pub use crate::{
         Layer, SceneBudget, SceneBudgetResource, SceneError, Stroke, StrokeCap2d,
