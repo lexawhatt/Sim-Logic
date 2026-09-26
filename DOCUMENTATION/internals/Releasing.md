@@ -2,7 +2,7 @@
 
 [Documentation](../README.md) / Internals
 
-The current candidate is **0.1.0**, using registry **sim-engine = 0.4.2**.
+The current version is **0.1.0**, using registry **sim-engine = 0.4.2**.
 Publication is a separate, deliberate step. None of the checks below uploads
 the crate, creates a tag or rewrites Git history.
 
@@ -19,9 +19,8 @@ enter the archive. Do not delete user saves or local IDE settings as cleanup.
 Old compiled probe binaries are rebuildable; their source, measurements and
 screenshots are evidence and should be kept separately.
 
-Before publishing, set the final version in `Cargo.toml`, resolve the lockfile,
-move the changelog's candidate entry to a dated release entry, and replace
-pre-publication checkout instructions in the README and getting-started guide.
+Before publishing, check that `Cargo.toml`, the lockfile, the dated changelog
+entry and the installation examples all refer to the intended release.
 Verify the crate name is available to this account; a network failure is not
 proof of availability. Keep the MIT/Apache licenses and all bundled font/Ferris
 notices in the package.

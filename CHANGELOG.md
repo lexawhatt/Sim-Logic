@@ -3,10 +3,9 @@
 User-visible changes to Sim;Logic. This project is pre-1.0; minor releases may
 contain documented breaking changes.
 
-## Unreleased - 0.1.0 preparation
+## 0.1.0 - 2026-09-26
 
-This is the first registry release candidate, not a published-version claim.
-The renderer dependency is the official Sim;Engine 0.4.2 release.
+Initial version, using the official Sim;Engine 0.4.2 release for rendering.
 
 ### Added
 
@@ -35,7 +34,7 @@ The renderer dependency is the official Sim;Engine 0.4.2 release.
 - Small feature examples and larger voxel, territory, shooter and piano
   applications, with headless tests sharing their application setup.
 
-### Release preparation
+### Documentation and packaging
 
 - Short product README, focused usage guides and a repeatable package check.
 - Explicit crate contents and docs.rs feature configuration; private working

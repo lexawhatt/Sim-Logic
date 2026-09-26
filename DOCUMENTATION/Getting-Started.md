@@ -2,7 +2,7 @@
 
 [Documentation](README.md)
 
-The checkout requires Rust 1.95 or newer. Its default `desktop` feature includes
+Sim;Logic requires Rust 1.95 or newer. Its default `desktop` feature includes
 the window and GPU dependencies. Use `default-features = false` when only the
 headless runtime is needed.
 
@@ -48,18 +48,16 @@ Run any of them with `cargo run --release --example <name>`.
 
 ## A complete headless program
 
-For a separate Cargo project, add this dependency for the 0.1.0 release:
+For a separate Cargo project, add this dependency:
 
 ```toml
 [dependencies]
 sim-logic = { version = "0.1.0", default-features = false }
 ```
 
-Until that version is published, replace `version = "0.1.0"` with
-`path = "../Sim-Logic"`, adjusted to your checkout's location.
-Copy this complete program
-into `src/main.rs` and run `cargo run`. It feeds one D-key press into the same
-runtime used by the desktop host, then checks that the ball moved:
+Copy this complete program into `src/main.rs` and run `cargo run`.
+It feeds one D-key press into the same runtime used by the desktop host,
+then checks that the ball moved:
 
 ```rust
 use std::time::Duration;

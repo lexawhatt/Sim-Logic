@@ -23,9 +23,7 @@ The 0.1 API is pre-1.0; future minor releases may change it.
 
 ## Install
 
-Rust **1.95 or newer** is required. The manifest below targets the first
-crates.io release; until it is published, use a checkout path instead of
-`version`.
+Rust **1.95 or newer** is required. Add Sim;Logic to your `Cargo.toml`:
 
 ```toml
 [dependencies]
