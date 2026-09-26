@@ -6,8 +6,12 @@
 //! keyboard events and repeated presses are ignored; returning to the window
 //! requires a fresh physical press before a key becomes held again.
 
+#[path = "desktop/budget_recovery.rs"]
+mod budget_recovery;
 #[path = "desktop/capture.rs"]
 mod capture;
+#[path = "desktop/geometry.rs"]
+mod geometry;
 #[path = "desktop/images.rs"]
 mod images;
 #[path = "desktop/keyboard.rs"]
@@ -27,6 +31,7 @@ use keyboard::map_key;
 #[cfg(test)]
 use winit::keyboard::KeyCode;
 
+pub use geometry::{DesktopScreenError, DesktopScreenMode, DesktopScreenUpdates};
 pub use images::DesktopImageError;
 pub use pointer::DesktopPointerError;
 pub use sim_engine::FrameCacheBudget;
@@ -86,6 +91,7 @@ pub struct DesktopConfig {
     logical_height: f64,
     present_mode: RendererPresentMode,
     frame_cache: FrameCacheBudget,
+    screen_mode: DesktopScreenMode,
     gpu_timing: bool,
     window_mode: crate::window::WindowMode,
 }
@@ -98,6 +104,7 @@ impl Default for DesktopConfig {
             logical_height: DEFAULT_HEIGHT,
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
+            screen_mode: DesktopScreenMode::default(),
             gpu_timing: false,
             window_mode: crate::window::WindowMode::Windowed,
         }
@@ -105,6 +112,19 @@ impl Default for DesktopConfig {
 }
 
 impl DesktopConfig {
+    /// Chooses compact/prepared retention or the legacy streaming baseline.
+    /// Set before starting the host. Scene admission still uses RenderLimits;
+    /// retained resources mirror current runs, with bounded old/new overlap.
+    pub fn set_screen_mode(&mut self, mode: DesktopScreenMode) -> &mut Self {
+        self.screen_mode = mode;
+        self
+    }
+
+    /// Returns the chosen screen geometry route.
+    pub const fn screen_mode(&self) -> DesktopScreenMode {
+        self.screen_mode
+    }
+
     /// Selects startup mode, without changing monitor video modes. An unavailable
     /// explicit monitor rejects startup. OS submission is not visual confirmation.
     pub fn set_window_mode(&mut self, mode: crate::window::WindowMode) -> &mut Self {
@@ -132,6 +152,7 @@ impl DesktopConfig {
             logical_height,
             present_mode: RendererPresentMode::Vsync,
             frame_cache: FrameCacheBudget::default(),
+            screen_mode: DesktopScreenMode::default(),
             gpu_timing: false,
             window_mode: crate::window::WindowMode::Windowed,
         })
@@ -254,9 +275,12 @@ pub struct DesktopRunReport {
     skipped_frames: u64,
     committed_transitions: u64,
     device_recoveries: u64,
+    budget_rejections: u64,
     exit_reason: DesktopExitReason,
     last_logic_frame: Option<LogicFrameReport>,
     last_render_frame: Option<FrameReport>,
+    last_screen_updates: Option<DesktopScreenUpdates>,
+    renderer_description: Option<String>,
     last_three_d_frame: Option<Mesh3dRenderReport>,
     last_three_d_updates: Option<DesktopThreeDUpdates>,
     three_d_updates: DesktopThreeDUpdates,
@@ -264,6 +288,20 @@ pub struct DesktopRunReport {
 }
 
 impl DesktopRunReport {
+    /// Final adapter/backend/PCI/driver, target, DPI and presentation context.
+    /// Captured once on successful exit, not formatted or allocated per frame.
+    pub fn renderer_description(&self) -> Option<&str> {
+        self.renderer_description.as_deref()
+    }
+    /// Resource preparation outside the last surface-frame report. This may
+    /// include uploads even when subsequent surface acquisition skipped.
+    pub const fn last_screen_updates(&self) -> Option<DesktopScreenUpdates> {
+        self.last_screen_updates
+    }
+    /// Returns explicitly recoverable budget-rejected frames, not surface skips.
+    pub const fn budget_rejections(&self) -> u64 {
+        self.budget_rejections
+    }
     /// Returns application frames accepted by the shared headless core.
     pub const fn logic_frames(&self) -> u64 {
         self.logic_frames
@@ -542,6 +580,10 @@ pub(crate) fn run<A: Action>(
         .run_app(&mut desktop)
         .map_err(DesktopRunError::EventLoop)?;
     desktop.collect_gpu_timings();
+    desktop.report.renderer_description = desktop
+        .renderer
+        .as_ref()
+        .map(|renderer| format!("{:?}", renderer.diagnostics()));
     match desktop.fatal {
         Some(error) => Err(error),
         None => Ok(desktop.report),
@@ -578,6 +620,8 @@ impl<A: Action> DesktopHost<A> {
         frame_budget: FrameBudget,
         three_d_limits: ThreeDRenderLimits,
     ) -> Self {
+        let mut images = DesktopImages::new();
+        images.screen_mode = config.screen_mode;
         Self {
             runner,
             config,
@@ -585,7 +629,7 @@ impl<A: Action> DesktopHost<A> {
             frame_budget,
             window: None,
             renderer: None,
-            images: DesktopImages::new(),
+            images,
             three_d: DesktopThreeD::new(),
             three_d_limits,
             pending_events: Vec::new(),
@@ -865,6 +909,16 @@ impl<A: Action> DesktopHost<A> {
             self.last_frame = Instant::now();
         }
         let active_generation = self.runner.world_generation();
+        if let Some(rejection) = budget_recovery::logical(&report, active_generation)
+            && self
+                .runner
+                .with_presentation_feedback(|feedback| feedback.reject(rejection))
+                .is_some()
+        {
+            self.report.budget_rejections = self.report.budget_rejections.saturating_add(1);
+            self.report.last_logic_frame = Some(report);
+            return;
+        }
         let snapshot_generation = self
             .runner
             .extracted_frame()
@@ -915,6 +969,7 @@ impl<A: Action> DesktopHost<A> {
         };
         self.report.last_three_d_frame = None;
         self.report.last_three_d_updates = None;
+        self.report.last_screen_updates = None;
         if extracted.three_d().is_none() {
             // A World with no active 3D view must not keep a retired World's
             // chunk revisions alive through renderer caches.
@@ -967,7 +1022,20 @@ impl<A: Action> DesktopHost<A> {
         };
         let presentation = match presentation {
             Ok(report) => Ok(report),
-            Err(ScreenPresentationError::Composition(error)) => Err(error),
+            Err(ScreenPresentationError::Composition(error)) => {
+                if let Some(rejection) =
+                    budget_recovery::composed(&error, report.frame_index(), active_generation)
+                    && self
+                        .runner
+                        .with_presentation_feedback(|feedback| feedback.reject(rejection))
+                        .is_some()
+                {
+                    self.report.budget_rejections = self.report.budget_rejections.saturating_add(1);
+                    self.report.last_logic_frame = Some(report);
+                    return;
+                }
+                Err(error)
+            }
             Err(ScreenPresentationError::Images(error)) => {
                 self.stop(
                     event_loop,
@@ -1002,6 +1070,7 @@ impl<A: Action> DesktopHost<A> {
         };
         match presentation {
             Ok(render_report) => {
+                self.report.last_screen_updates = Some(self.images.geometry.updates);
                 self.report.gpu_timings.submitted(
                     report.frame_index(),
                     GpuTimingSource::FrameComposer,
@@ -1010,6 +1079,8 @@ impl<A: Action> DesktopHost<A> {
                 self.report.last_render_frame = Some(render_report);
                 match render_report.status() {
                     RenderStatus::Drawn => {
+                        self.runner
+                            .with_presentation_feedback(|feedback| feedback.presented());
                         self.report.drawn_frames = self.report.drawn_frames.saturating_add(1);
                         self.surface_waiting = false;
                     }
@@ -1053,6 +1124,7 @@ impl<A: Action> DesktopHost<A> {
                                 renderer.gpu_timing_statistics(),
                             );
                             self.report.last_render_frame = None;
+                            self.report.last_screen_updates = None;
                             self.report.last_three_d_frame = None;
                             self.report.last_three_d_updates = None;
                             if let Err(error) = self.three_d.restore(renderer) {

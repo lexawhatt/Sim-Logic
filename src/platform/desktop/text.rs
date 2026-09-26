@@ -191,14 +191,19 @@ impl DesktopText {
                 renderer.clear_frame_cache()
             });
         self.cache.retain_visible_runs(
-            extracted
-                .resolved_screen_texts()
-                .iter()
-                .map(|text| (text.source(), !text.text().is_empty())),
+            extracted.resolved_screen_texts().iter().map(|text| {
+                (
+                    text.source(),
+                    !text.text().is_empty()
+                        && text.visual().clip() != crate::screen::ScreenClip::Empty,
+                )
+            }),
             |run| run.source,
         )?;
         for visual in extracted.resolved_screen_texts() {
-            if !visual.text().is_empty() {
+            if !visual.text().is_empty()
+                && visual.visual().clip() != crate::screen::ScreenClip::Empty
+            {
                 self.prepare_one(renderer, visual, scale)?;
             }
         }

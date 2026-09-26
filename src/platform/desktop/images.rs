@@ -23,6 +23,8 @@ use crate::{
 /// composition fails; no partially composed frame is presented.
 #[derive(Debug)]
 pub enum DesktopImageError {
+    /// Retained screen geometry could not be prepared.
+    Geometry(super::geometry::DesktopScreenError),
     /// A published image did not resolve in the owning application's registry.
     MissingAsset {
         /// Managed visual requesting the unavailable asset.
@@ -62,6 +64,7 @@ pub enum DesktopImageError {
 impl fmt::Display for DesktopImageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Geometry(error) => error.fmt(formatter),
             Self::TextFeatureRequired => formatter.write_str("desktop labels require the `text` feature; `headless-text` alone only extracts CPU text"),
             Self::MissingAsset { source, image } => write!(
                 formatter,
@@ -97,6 +100,7 @@ impl fmt::Display for DesktopImageError {
 impl Error for DesktopImageError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Geometry(error) => Some(error),
             Self::Upload { error, .. } => Some(error),
             _ => None,
         }
@@ -189,6 +193,8 @@ impl<K: Copy + Eq, V> ResourceCache<K, V> {
 }
 
 pub(super) struct DesktopImages {
+    pub(super) geometry: super::geometry::DesktopGeometry,
+    pub(super) screen_mode: super::geometry::DesktopScreenMode,
     resources: ResourceCache<ImageAssetId, Image2d>,
     referenced: ScreenReferences,
     #[cfg(feature = "text")]
@@ -222,12 +228,14 @@ pub(super) fn needs_managed_presentation(
     if !extracted.resolved_screen_texts().is_empty() || _images.texts.has_runs() {
         return true;
     }
-    !extracted.resolved_screen_images().is_empty()
+    !extracted.screen_draws().is_empty() || _images.geometry.has_runs()
 }
 
 impl DesktopImages {
     pub(super) fn new() -> Self {
         Self {
+            geometry: super::geometry::DesktopGeometry::default(),
+            screen_mode: super::geometry::DesktopScreenMode::default(),
             resources: ResourceCache::new(),
             referenced: ScreenReferences::default(),
             #[cfg(feature = "text")]
@@ -236,6 +244,7 @@ impl DesktopImages {
     }
 
     pub(super) fn clear(&mut self) {
+        self.geometry.clear();
         self.resources.clear();
         self.referenced.clear();
         #[cfg(feature = "text")]
@@ -257,6 +266,7 @@ impl DesktopImages {
             &mut self.referenced,
             budget,
             Some(target_bytes),
+            self.screen_mode,
         )
     }
 
@@ -267,6 +277,9 @@ impl DesktopImages {
         extracted: &ExtractedFrame,
     ) -> Result<(), DesktopImageError> {
         for visual in extracted.resolved_screen_images() {
+            if visual.clip() == crate::screen::ScreenClip::Empty {
+                continue;
+            }
             let source = visual.source();
             let image = visual.image();
             let asset = registry
@@ -315,14 +328,20 @@ struct FrameWork {
 
 impl FrameWork {
     fn scene(&mut self, statistics: SceneStatistics) {
+        self.geometry(statistics, true);
+    }
+
+    fn geometry(&mut self, statistics: SceneStatistics, streaming: bool) {
         self.passes = self.passes.saturating_add(1);
         self.commands = self.commands.saturating_add(statistics.accepted_commands());
         self.vertices = self
             .vertices
             .saturating_add(statistics.estimated_tessellated_vertices());
-        self.upload_bytes = self
-            .upload_bytes
-            .saturating_add(statistics.estimated_upload_bytes());
+        if streaming {
+            self.upload_bytes = self
+                .upload_bytes
+                .saturating_add(statistics.estimated_upload_bytes());
+        }
         self.draw_calls = self
             .draw_calls
             .saturating_add(statistics.estimated_draw_batches());
@@ -380,13 +399,21 @@ impl FrameWork {
     }
 }
 
+#[cfg(test)]
 fn preflight(
     extracted: &ExtractedFrame,
     registry: &ImageAssetRegistry,
     referenced: &mut ScreenReferences,
     budget: FrameBudget,
 ) -> Result<(), ScreenPresentationError> {
-    preflight_with_target(extracted, registry, referenced, budget, None)
+    preflight_with_target(
+        extracted,
+        registry,
+        referenced,
+        budget,
+        None,
+        super::geometry::DesktopScreenMode::Streaming,
+    )
 }
 
 fn preflight_with_target(
@@ -395,6 +422,7 @@ fn preflight_with_target(
     referenced: &mut ScreenReferences,
     budget: FrameBudget,
     target_bytes: Option<usize>,
+    mode: super::geometry::DesktopScreenMode,
 ) -> Result<(), ScreenPresentationError> {
     referenced.clear();
     if referenced.images.capacity() < registry.len() {
@@ -419,7 +447,12 @@ fn preflight_with_target(
                 let scene = extracted
                     .screen_rectangle_run(run)
                     .ok_or(DesktopImageError::InvalidDrawPlan)?;
-                work.scene(scene.statistics());
+                // Resource uploads are separately bounded/reported at creation.
+                // Vertex/draw admission stays conservative until Engine preflight.
+                work.geometry(
+                    scene.statistics(),
+                    mode == super::geometry::DesktopScreenMode::Streaming,
+                );
             }
             ScreenDraw::Image { index } => {
                 let visual = extracted
@@ -427,6 +460,9 @@ fn preflight_with_target(
                     .get(index)
                     .ok_or(DesktopImageError::InvalidDrawPlan)?;
                 let image = visual.image();
+                if visual.clip() == crate::screen::ScreenClip::Empty {
+                    continue;
+                }
                 let asset = registry.get(image).ok_or(DesktopImageError::MissingAsset {
                     source: visual.source(),
                     image,
@@ -447,7 +483,9 @@ fn preflight_with_target(
                     .ok_or(super::text::DesktopTextError::InvalidDrawPlan)?;
                 // Shaped count includes spacing glyphs, so this is conservative.
                 // Engine validates actual raster geometry and draw count later.
-                if text.text().is_empty() {
+                if text.text().is_empty()
+                    || text.visual().clip() == crate::screen::ScreenClip::Empty
+                {
                     continue;
                 }
                 let font = text.font();
@@ -534,20 +572,22 @@ pub(super) fn present(
     budget: FrameBudget,
     target: Option<&RenderTarget2d>,
 ) -> Result<FrameReport, ScreenPresentationError> {
-    match target {
-        Some(target) => preflight_with_target(
-            extracted,
-            registry,
-            &mut images.referenced,
-            budget,
-            Some(target.allocation_bytes()),
-        )?,
-        None => preflight(extracted, registry, &mut images.referenced, budget)?,
-    }
+    preflight_with_target(
+        extracted,
+        registry,
+        &mut images.referenced,
+        budget,
+        target.map(RenderTarget2d::allocation_bytes),
+        images.screen_mode,
+    )?;
     let viewport = renderer
         .logical_viewport()
         .map_err(|_| FrameComposerError::Frame(RendererFrameError::InvalidViewport))?;
     images.prepare(renderer, registry, extracted)?;
+    images
+        .geometry
+        .prepare(renderer, extracted, images.screen_mode)
+        .map_err(DesktopImageError::Geometry)?;
     #[cfg(feature = "text")]
     images.texts.prepare(renderer, extracted)?;
 
@@ -573,13 +613,20 @@ pub(super) fn present(
                 let scene = extracted
                     .screen_rectangle_run(run)
                     .ok_or(DesktopImageError::InvalidDrawPlan)?;
-                frame.draw_screen_scene(scene, options)?;
+                if images.screen_mode == super::geometry::DesktopScreenMode::Streaming {
+                    frame.draw_screen_scene(scene, options)?;
+                } else {
+                    images.geometry.draw(&mut frame, run, options)?;
+                }
             }
             ScreenDraw::Image { index } => {
                 let visual = extracted
                     .resolved_screen_images()
                     .get(index)
                     .ok_or(DesktopImageError::InvalidDrawPlan)?;
+                if visual.clip() == crate::screen::ScreenClip::Empty {
+                    continue;
+                }
                 let image = images.resources.get(visual.image()).ok_or(
                     DesktopImageError::MissingAsset {
                         source: visual.source(),
@@ -814,6 +861,7 @@ mod tests {
             &mut referenced,
             three_d,
             Some(64),
+            super::super::geometry::DesktopScreenMode::Streaming,
         )
         .unwrap();
         assert!(matches!(
@@ -822,7 +870,8 @@ mod tests {
                 runner.image_assets(),
                 &mut referenced,
                 enough,
-                Some(64)
+                Some(64),
+                super::super::geometry::DesktopScreenMode::Streaming
             ),
             Err(ScreenPresentationError::Composition(
                 FrameComposerError::BudgetExceeded {
@@ -839,7 +888,8 @@ mod tests {
                 runner.image_assets(),
                 &mut referenced,
                 short_texture,
-                Some(64)
+                Some(64),
+                super::super::geometry::DesktopScreenMode::Streaming
             ),
             Err(ScreenPresentationError::Composition(
                 FrameComposerError::BudgetExceeded {

@@ -1,4 +1,5 @@
 /target
+/tests/consumers/budget_api/Cargo.lock
 /.idea
 /TargetProdDocs
 /Workflow

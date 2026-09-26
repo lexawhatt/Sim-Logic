@@ -59,7 +59,7 @@ impl ResolvedScreenPrimitive {
             Self::Circle { .. } => 2,
         }
     }
-    pub(super) fn append(self, scene: &mut ScreenScene) -> Result<(), SceneError> {
+    pub(crate) fn append(self, scene: &mut ScreenScene) -> Result<(), SceneError> {
         match self {
             Self::Rectangle(value) => value.visual().append(scene),
             Self::Line { visual, .. } => visual.append(scene),

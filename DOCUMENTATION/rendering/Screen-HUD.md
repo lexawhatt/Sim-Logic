@@ -132,6 +132,64 @@ source count and screen-scene work limits before startup. Desktop
 `FrameLimits` also bound the combined presentation. Increasing only one limit
 does not bypass the others.
 
+`SceneBudget`, `SceneBudgetResource`, `SceneError`, `Stroke` and the stroke style
+argument types are exported by `sim_logic` and its prelude. No direct Engine
+dependency is needed to construct a budget. The independent downstream test
+at `tests/consumers/budget_api` admits 10,001 commands and verifies atomic
+rejection of the next command.
+
+## Native retention and recovery
+
+The desktop host defaults to `DesktopScreenMode::Prepared`. It retains each
+contiguous screen geometry run and compares exact source identities and values.
+An unchanged run performs no new tessellation or geometry upload. Editing one
+run rebuilds that run, not other runs. Changes that split/reorder runs may
+invalidate more than one. CPU extraction still validates, sorts and constructs
+the snapshot each frame; this is not an incremental ECS extraction cache.
+
+`DesktopConfig::set_screen_mode` also accepts `Streaming` for paired baseline
+measurements and opt-in `Compact`. Compact uses Engine's analytic filled circles,
+round lines and square rectangles. It splits at incompatible styles and every
+256 records, preserving order; unsupported parts use ordinary prepared geometry
+without forcing their simple neighbours down that route. Split parts consume
+additional frame items, so the composed pass limit also needs to fit them.
+It changes polygonal round boundaries to analytic
+coverage and has Engine's stricter destination-dependent precision envelope.
+Construction rejection can select the ordinary route, but a later target/DPI
+precision rejection remains an error, not permission to weaken validation.
+Use Prepared when that additional compact contract is unsuitable.
+
+Layers, clips, alpha and interleaving with images/text keep their original
+ordering. Screen geometry is already in logical pixels, so world-camera motion
+alone does not invalidate it. Host-reprojected pan/zoom does change its source
+values. Viewport/DPI changes are revalidated by Engine. World replacement clears
+the cache; device replacement rebuilds it from the current CPU snapshot. The
+cache mirrors current runs rather than keeping a history of edits. Retained
+work is bounded by screen admission limits; replacement can temporarily retain
+both old and new resources. Frame preflight still conservatively estimates
+ordinary vertex/draw work, even with Compact selected.
+
+`DesktopRunReport::last_screen_updates()` reports geometry preparation CPU time,
+uploads and reuse separately from surface-frame metrics. Resource uploads can
+precede a skipped surface frame. `renderer_description()` records the final
+adapter, backend, PCI address, driver, size, DPI and present mode. Neither field
+turns a CPU-only measurement into a native FPS claim.
+
+Register `PresentationFeedback::default()` with `register_app_resource` to opt
+into recovery from typed screen/world SceneBudget and composed FrameBudget
+rejections. Read `AppRes<PresentationFeedback>` on the next update to reduce
+presentation work, close the document or exit. No quotas are silently increased,
+and no partial scene is displayed. Canonical updates continue, without rollback;
+the application decides whether to pause. Feedback clears after an actual
+successful presentation, not after an occluded/skipped attempt.
+
+This does not recover invalid geometry, allocation failure, failing systems,
+per-kind source-count limits, or an invalid initial World. Initial construction
+must first produce a valid snapshot. Without the resource, desktop retains its
+fail-fast policy. After rejection the compositor may keep the previous image,
+but that image is not guaranteed through resize/loss and is never replayed as
+if it belonged to a replacement World.
+
 World and screen extraction publish together. If either fails, no half-new
 snapshot is published. Headless code can inspect
 `ExtractedFrame::resolved_screen_rectangles()` and should check its World

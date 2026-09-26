@@ -7,6 +7,13 @@ use bevy_ecs::{
 };
 use sim_engine::{LogicalViewport, SceneBudget};
 
+#[path = "feedback.rs"]
+mod feedback;
+pub use feedback::{
+    PresentationBudgetRejection, PresentationBudgetResource, PresentationBudgetStage,
+    PresentationFeedback,
+};
+
 /// Validated logical viewport supplied to the current application frame.
 ///
 /// FrameUpdate systems may use this for camera or screen-layout decisions.

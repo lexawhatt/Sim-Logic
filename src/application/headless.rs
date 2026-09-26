@@ -158,6 +158,15 @@ impl<A: Action> HeadlessRunner<A> {
     }
 
     #[cfg(feature = "desktop")]
+    pub(crate) fn with_presentation_feedback<R>(
+        &mut self,
+        update: impl FnOnce(&mut crate::render::PresentationFeedback) -> R,
+    ) -> Option<R> {
+        self.application_resources
+            .with_mut(&mut self.active.world, update)
+    }
+
+    #[cfg(feature = "desktop")]
     pub(crate) fn with_window_controls<R>(
         &mut self,
         update: impl FnOnce(&mut crate::window::WindowControls) -> R,

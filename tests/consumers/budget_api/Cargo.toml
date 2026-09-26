@@ -1,0 +1,18 @@
+[package]
+name = "sim-logic-budget-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+sim-logic = { path = "../../..", default-features = false }
+
+[[test]]
+name = "public_budget"
+path = "../../public_scene_budgets.rs"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = false

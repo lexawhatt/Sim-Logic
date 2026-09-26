@@ -2150,9 +2150,8 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sim-engine"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8129d9e17522c3f3e50ab020262220eb200f0b4c6e561130d51e085ffd043d7"
+version = "0.4.2"
+source = "git+https://github.com/lexawhatt/Sim-Engine.git?rev=aecda2b69ba5d2c3b72827610ab7b41432ab78fe#aecda2b69ba5d2c3b72827610ab7b41432ab78fe"
 dependencies = [
  "ab_glyph",
  "bytemuck",

@@ -80,6 +80,8 @@ pub mod world;
 /// macros resolve their generated Bevy paths with only a `sim-logic`
 /// dependency.
 pub use bevy_ecs;
+// CPU configuration values required by public Logic APIs. Downstream users
+// must not need a second renderer dependency just to construct an argument.
 pub use component::{ComponentApprovalError, ComponentTuple, LifecycleHook};
 #[cfg(feature = "easter-eggs")]
 pub use easter_eggs::{CrabDrawError, draw_crab};
@@ -88,6 +90,11 @@ pub use extraction::ResolvedScreenText;
 pub use extraction::{
     ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
     ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
+};
+pub use sim_engine::{
+    Layer, SceneBudget, SceneBudgetResource, SceneError, Stroke, StrokeCap2d, StrokeDashPattern2d,
+    StrokeJoin2d, StrokeMarker2d, StrokeMarkerAnchor2d, StrokeStyle2d, StrokeStyleError,
+    StrokeWidthMode2d,
 };
 
 /// Convenience result for application code and fallible Systems that combine
@@ -133,7 +140,8 @@ pub mod prelude {
     pub use crate::desktop::{
         DesktopConfig, DesktopExitReason, DesktopGpuTimingSample, DesktopGpuTimings,
         DesktopImageError, DesktopPointerError, DesktopRunError, DesktopRunReport,
-        DesktopThreeDError, DesktopThreeDUpdates,
+        DesktopScreenError, DesktopScreenMode, DesktopScreenUpdates, DesktopThreeDError,
+        DesktopThreeDUpdates,
     };
     pub use crate::events::{EventReader, EventSendError, EventWriter, WorldEvent};
     pub use crate::headless::{
@@ -156,7 +164,10 @@ pub mod prelude {
         LinearAcceleration2d, LinearAcceleration2dError, LinearVelocity2d, LinearVelocity2dError,
     };
     pub use crate::query::{Query, QueryEntityError, QuerySingleError, Single};
-    pub use crate::render::{FrameLimits, FrameViewport, RenderLimits};
+    pub use crate::render::{
+        FrameLimits, FrameViewport, PresentationBudgetRejection, PresentationBudgetResource,
+        PresentationBudgetStage, PresentationFeedback, RenderLimits,
+    };
     pub use crate::resources::{AppRes, AppResMut, ApplicationResourceError};
     pub use crate::screen::{
         ImageFilter, ImageRegion, ImageVisualError, ScreenCircleVisual, ScreenClip,
@@ -194,5 +205,10 @@ pub mod prelude {
     pub use crate::{
         ExtractedFrame, ExtractionError, ResolvedCircle, ResolvedLine, ResolvedRectangle,
         ResolvedScreenImage, ResolvedScreenPrimitive, ResolvedScreenRectangle, ScreenDraw,
+    };
+    pub use crate::{
+        Layer, SceneBudget, SceneBudgetResource, SceneError, Stroke, StrokeCap2d,
+        StrokeDashPattern2d, StrokeJoin2d, StrokeMarker2d, StrokeMarkerAnchor2d, StrokeStyle2d,
+        StrokeStyleError, StrokeWidthMode2d,
     };
 }
