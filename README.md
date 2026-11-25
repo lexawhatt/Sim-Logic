@@ -18,7 +18,8 @@ a physics engine or a second renderer.
 - A retained 3D bridge for host-built meshes, materials, lighting and textures.
 - Optional audio output, explicit resource limits and presentation diagnostics.
 
-The current dependency is Sim;Engine **0.4.2**, pinned exactly.
+This development checkout uses sibling `../Sim-Engine` **0.5.0-dev.1**.
+The sibling is required to build; this local migration is not a registry release.
 The 0.1 API is pre-1.0; future minor releases may change it.
 
 ## Install

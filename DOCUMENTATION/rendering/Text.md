@@ -327,3 +327,52 @@ from the result. To compare Engine shaping with Logic label preparation alone:
 ```bash
 cargo bench --no-default-features --features text --bench screen_text -- --shaping-probe
 ```
+
+## Text on application-owned surfaces
+
+`TextPreparationSession::shape_line` now exposes an owned CPU shaping snapshot,
+including UTF-8 cluster offsets, glyph positions and metrics. It is independent
+of screen widgets and retains shared immutable font storage. Use
+`TextFont::rasterize_glyph(glyph_id, scale)` for linear alpha coverage and physical
+baseline bearings. The application can pack those bitmaps into its own image,
+convert coverage to straight-alpha RGBA and map it onto a 3D page using the
+existing texture/mesh APIs. Page meshes and UV projection remain application code.
+
+`sim_logic::text::layout_surface_text` provides a bounded Latin/Cyrillic page
+helper. Select `TextDirection::Ltr` explicitly in `TextSettings`. It wraps at
+ASCII spaces and newlines and preserves document byte ranges. Inputs are
+limited to 4096 bytes and 128 lines. Oversized words reject instead of clipping.
+Candidate shaping has bounded quadratic work; rebuild when the document changes.
+This helper does not implement bidi paragraphs, hyphenation or grapheme editing.
+
+Each immutable `SurfaceTextLine` exposes `source()`, `baseline()` and `shaped()`.
+`caret_at(document_byte)` and `caret_x(document_byte)` use Engine's exact pen
+positions, excluding glyph placement offsets. `selection(document_range)` borrows
+whole shaped clusters in visual order without allocating; `selection_bounds`
+returns a horizontal pen highlight using the line's typographic top/height.
+Empty selections have zero width. Split multiline selections at source ranges.
+
+Only formed-cluster boundaries are insertion points. Ligature and combined-mark
+interiors return `SurfaceTextError::Geometry` with Engine's structured error and
+the document `source_start`; add that start to the error's line-relative offsets.
+Offsets outside the wrapped line reject separately. Reversed selection ranges
+reject. No implicit snapping or invented interior carets are used. These are
+shaping clusters, not a promise of Unicode grapheme editing behavior.
+
+The borrowed Engine caret/cluster retains its original line, font and style;
+its byte offsets are line-relative. `ShapedLine::clusters()`, `caret_at()` and
+`selection()` are available through the public `fonts` reexports, including for
+single RTL runs prepared with `TextPreparationSession::shape_line`. RTL visual
+order differs from logical source order. The page wrapping helper stays LTR;
+it does not silently treat an RTL run as a bidi paragraph.
+
+Migration from the initial unpublished dev helper: replace `cluster_origin_x`
+with `caret_x`, `cluster_bounds` with `selection_bounds`, and public line fields
+with accessors. The approximate glyph-origin implementation has been removed.
+
+Shaped snapshots survive session scratch clearing and GPU recovery. Raster
+bitmaps are caller-owned. A caller-owned atlas must key its cache by exact font,
+style, glyph and raster scale, cap aggregate pixels and packing metadata, and
+invalidate UV mappings when repacked. Account for both old and replacement atlas
+storage during transactional updates; per-glyph raster limits do not bound a
+whole page cache. No desktop atlas borrowing or GPU atlas snapshot API is implied.

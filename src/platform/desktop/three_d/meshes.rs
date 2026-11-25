@@ -48,22 +48,7 @@ impl CustomMeshes {
         limits: ThreeDRenderLimits,
     ) -> Result<(), DesktopThreeDError> {
         self.updates = DesktopThreeDUpdates::empty();
-        for index in (0..self.slots.len()).rev() {
-            let slot = &self.slots[index];
-            let source = slot.scene.applied.source;
-            let incoming = records
-                .binary_search_by_key(&source.stable_bits(), |record| {
-                    record.source().stable_bits()
-                })
-                .ok()
-                .map(|index| records[index].source());
-            if !same_source(source, incoming) {
-                scene
-                    .remove(slot.scene.id)
-                    .map_err(DesktopThreeDError::Scene)?;
-                self.slots.remove(index);
-            }
-        }
+        self.prune(scene, records)?;
 
         for record in records {
             let source = record.source();
@@ -102,6 +87,30 @@ impl CustomMeshes {
                         },
                     );
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn prune(
+        &mut self,
+        scene: &mut Scene3d,
+        records: &[ResolvedMesh3d],
+    ) -> Result<(), DesktopThreeDError> {
+        for index in (0..self.slots.len()).rev() {
+            let slot = &self.slots[index];
+            let source = slot.scene.applied.source;
+            let incoming = records
+                .binary_search_by_key(&source.stable_bits(), |record| {
+                    record.source().stable_bits()
+                })
+                .ok()
+                .map(|index| records[index].source());
+            if !same_source(source, incoming) {
+                scene
+                    .remove(slot.scene.id)
+                    .map_err(DesktopThreeDError::Scene)?;
+                self.slots.remove(index);
             }
         }
         Ok(())

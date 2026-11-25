@@ -160,6 +160,7 @@ impl<T: Send + Sync + 'static> supported::Param for AppResMut<'_, T> {
         true
     }
 }
+impl supported::Param for crate::input::FrameText<'_> {}
 impl<A: Action> supported::Param for FrameInput<'_, A> {}
 impl<A: Action> supported::Param for FixedInput<'_, A> {}
 impl<F: QueryFilter> supported::Param for CircleOverlapEntities<'_, '_, F> {}

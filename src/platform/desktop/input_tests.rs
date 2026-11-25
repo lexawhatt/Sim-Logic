@@ -512,3 +512,25 @@ fn unchanged_capture_does_not_cancel_input_but_ownership_change_cancels_a_held_g
     );
     Ok(())
 }
+
+#[test]
+fn text_focus_boundary_rejects_late_commits_and_keeps_markers_consistent()
+-> Result<(), Box<dyn Error>> {
+    use crate::input::TextEvent;
+    let mut host = host(16)?;
+    host.text_enabled = true;
+    host.collect_text(TextEvent::Commit("до".into()));
+    host.collect_focus_loss();
+    host.collect_text(TextEvent::Commit("late".into()));
+    assert_eq!(host.pending_text, [TextEvent::Cancel]);
+    crate::input::validate_text_order(&host.pending_events, &host.pending_text)?;
+    host.pending_text.clear();
+    host.pending_events.clear();
+    host.collect_text(TextEvent::Commit("still late".into()));
+    assert!(host.pending_text.is_empty());
+    host.text_focused = true;
+    host.collect_text(TextEvent::Commit("после".into()));
+    assert_eq!(host.pending_text, [TextEvent::Commit("после".into())]);
+    crate::input::validate_text_order(&host.pending_events, &host.pending_text)?;
+    Ok(())
+}

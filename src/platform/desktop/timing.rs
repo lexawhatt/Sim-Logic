@@ -1,12 +1,30 @@
 //! Bounded asynchronous GPU samples correlated to the logical frame that submitted them.
 
+use crate::identity::WorldGeneration;
+
 use sim_engine::{
     GpuTimingBatch, GpuTimingId, GpuTimingSample, GpuTimingSource, GpuTimingStatistics,
     WgpuRenderer,
 };
 
-const MAX_PENDING: usize = 16;
+const MAX_PENDING: usize = 32;
 const MAX_COLLECTED: usize = 8;
+
+/// Host role of an exactly correlated Engine pass. The Engine layered depth
+/// compositor has no timing ID, so no measured sample is fabricated for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopGpuPassRole {
+    /// Ordinary single-scene depth pass.
+    Ordinary3d,
+    /// Lower-resolution Base shading.
+    BaseLow,
+    /// Base coverage/depth (and shading) at Detail/output resolution.
+    BaseVisibility,
+    /// Detail shading at output resolution.
+    Detail,
+    /// Final window composition including World 2D and screen UI.
+    WindowComposition,
+}
 
 /// One completed GPU pass with its originating logical frame and device generation.
 ///
@@ -17,6 +35,8 @@ pub struct DesktopGpuTimingSample {
     logic_frame: u64,
     generation: u64,
     sample: GpuTimingSample,
+    world: WorldGeneration,
+    role: DesktopGpuPassRole,
 }
 
 impl DesktopGpuTimingSample {
@@ -30,6 +50,16 @@ impl DesktopGpuTimingSample {
         self.generation
     }
 
+    /// World whose complete snapshot submitted this pass.
+    pub const fn world_generation(self) -> WorldGeneration {
+        self.world
+    }
+
+    /// Host pass role, matched by Engine source and timing ID.
+    pub const fn role(self) -> DesktopGpuPassRole {
+        self.role
+    }
+
     /// Returns Engine's original source, opaque report ID and hardware interval.
     pub const fn sample(self) -> GpuTimingSample {
         self.sample
@@ -40,7 +70,7 @@ impl DesktopGpuTimingSample {
 ///
 /// No timing is inferred for Disabled/Unavailable devices, skipped sampling,
 /// failed readback or pending work. Statistics preserve Engine's explicit status
-/// and loss counters. At most eight completed samples and sixteen pending
+/// and loss counters. At most eight completed samples and thirty-two pending
 /// report-to-frame associations are retained; no sample history grows with time.
 /// Late or failed samples can outlive association capacity, in which case they
 /// remain in the raw batch but are never attributed to a guessed logical frame.
@@ -91,7 +121,7 @@ impl DesktopGpuTimings {
         self.unmatched_samples
     }
 
-    /// Counts associations replaced when the sixteen-entry metadata limit was full.
+    /// Counts associations replaced when the thirty-two-entry metadata limit was full.
     /// Failed readbacks can leave associations that never receive a sample.
     pub const fn evicted_correlations(&self) -> u64 {
         self.evicted_correlations
@@ -109,14 +139,24 @@ impl DesktopGpuTimings {
         };
     }
 
-    pub(super) fn submitted(
+    pub(super) fn submitted_pass(
         &mut self,
         logic_frame: u64,
+        world: WorldGeneration,
+        role: DesktopGpuPassRole,
         source: GpuTimingSource,
         id: Option<GpuTimingId>,
     ) {
         if let Some(id) = id
-            && self.pending.insert(id, source, logic_frame)
+            && self.pending.insert_context(
+                id,
+                source,
+                Correlation {
+                    logic_frame,
+                    world: Some(world),
+                    role,
+                },
+            )
         {
             self.evicted_correlations = self.evicted_correlations.saturating_add(1);
         }
@@ -130,11 +170,14 @@ impl DesktopGpuTimings {
         }
         self.samples.fill(None);
         for (index, sample) in batch.samples().iter().copied().enumerate() {
-            if let Some(logic_frame) = self.pending.take(sample.id(), sample.source())
+            if let Some(context) = self.pending.take(sample.id(), sample.source())
+                && let Some(world) = context.world
                 && let Some(destination) = self.samples.get_mut(index)
             {
                 *destination = Some(DesktopGpuTimingSample {
-                    logic_frame,
+                    logic_frame: context.logic_frame,
+                    world,
+                    role: context.role,
                     generation: self.generation,
                     sample,
                 });
@@ -150,7 +193,13 @@ impl DesktopGpuTimings {
 struct PendingTiming<Id> {
     id: Id,
     source: GpuTimingSource,
+    context: Correlation,
+}
+#[derive(Debug, Clone, Copy)]
+struct Correlation {
     logic_frame: u64,
+    world: Option<WorldGeneration>,
+    role: DesktopGpuPassRole,
 }
 
 #[derive(Debug)]
@@ -168,7 +217,19 @@ impl<Id: Copy> Default for PendingTimings<Id> {
 
 impl<Id: Copy + Ord> PendingTimings<Id> {
     /// Returns whether a previous association had to be evicted.
+    #[cfg(test)]
     fn insert(&mut self, id: Id, source: GpuTimingSource, logic_frame: u64) -> bool {
+        self.insert_context(
+            id,
+            source,
+            Correlation {
+                logic_frame,
+                world: None,
+                role: DesktopGpuPassRole::Ordinary3d,
+            },
+        )
+    }
+    fn insert_context(&mut self, id: Id, source: GpuTimingSource, context: Correlation) -> bool {
         if self
             .entries
             .iter()
@@ -194,17 +255,17 @@ impl<Id: Copy + Ord> PendingTimings<Id> {
         self.entries[index] = Some(PendingTiming {
             id,
             source,
-            logic_frame,
+            context,
         });
         vacant.is_none()
     }
 
-    fn take(&mut self, id: Id, source: GpuTimingSource) -> Option<u64> {
+    fn take(&mut self, id: Id, source: GpuTimingSource) -> Option<Correlation> {
         self.entries
             .iter_mut()
             .find(|entry| entry.is_some_and(|entry| entry.id == id && entry.source == source))?
             .take()
-            .map(|entry| entry.logic_frame)
+            .map(|entry| entry.context)
     }
 }
 
@@ -218,11 +279,36 @@ mod tests {
         assert!(!pending.insert(10, GpuTimingSource::Scene3d, 100));
         assert!(!pending.insert(11, GpuTimingSource::FrameComposer, 100));
         assert!(!pending.insert(12, GpuTimingSource::Scene3d, 101));
-        assert_eq!(pending.take(10, GpuTimingSource::FrameComposer), None);
-        assert_eq!(pending.take(12, GpuTimingSource::Scene3d), Some(101));
-        assert_eq!(pending.take(10, GpuTimingSource::Scene3d), Some(100));
-        assert_eq!(pending.take(11, GpuTimingSource::FrameComposer), Some(100));
-        assert_eq!(pending.take(10, GpuTimingSource::Scene3d), None);
+        assert_eq!(
+            pending
+                .take(10, GpuTimingSource::FrameComposer)
+                .map(|c| c.logic_frame),
+            None
+        );
+        assert_eq!(
+            pending
+                .take(12, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            Some(101)
+        );
+        assert_eq!(
+            pending
+                .take(10, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            Some(100)
+        );
+        assert_eq!(
+            pending
+                .take(11, GpuTimingSource::FrameComposer)
+                .map(|c| c.logic_frame),
+            Some(100)
+        );
+        assert_eq!(
+            pending
+                .take(10, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            None
+        );
     }
 
     #[test]
@@ -231,11 +317,26 @@ mod tests {
         for id in 1..=MAX_PENDING as u64 {
             assert!(!pending.insert(id, GpuTimingSource::Scene3d, id + 100));
         }
-        assert!(pending.insert(17, GpuTimingSource::Scene3d, 117));
-        assert_eq!(pending.take(1, GpuTimingSource::Scene3d), None);
-        assert_eq!(pending.take(17, GpuTimingSource::Scene3d), Some(117));
-        assert!(!pending.insert(18, GpuTimingSource::Scene3d, 118));
-        assert_eq!(pending.take(2, GpuTimingSource::Scene3d), Some(102));
+        assert!(pending.insert(33, GpuTimingSource::Scene3d, 117));
+        assert_eq!(
+            pending
+                .take(1, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            None
+        );
+        assert_eq!(
+            pending
+                .take(33, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            Some(117)
+        );
+        assert!(!pending.insert(34, GpuTimingSource::Scene3d, 118));
+        assert_eq!(
+            pending
+                .take(2, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            Some(102)
+        );
     }
 
     #[test]
@@ -243,7 +344,57 @@ mod tests {
         let mut pending = PendingTimings::<u64>::default();
         assert!(!pending.insert(1, GpuTimingSource::Scene3d, 10));
         assert!(!pending.insert(1, GpuTimingSource::Scene3d, 11));
-        assert_eq!(pending.take(1, GpuTimingSource::Scene3d), Some(10));
+        assert_eq!(
+            pending
+                .take(1, GpuTimingSource::Scene3d)
+                .map(|c| c.logic_frame),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn layered_roles_keep_their_own_world_and_frame_out_of_order() {
+        use crate::identity::ApplicationId;
+        let world = WorldGeneration::new(ApplicationId::from_raw(7), 2);
+        let next = WorldGeneration::new(ApplicationId::from_raw(7), 3);
+        let mut pending = PendingTimings::<u64>::default();
+        for (id, role) in [
+            (1, DesktopGpuPassRole::BaseLow),
+            (2, DesktopGpuPassRole::BaseVisibility),
+            (3, DesktopGpuPassRole::Detail),
+        ] {
+            pending.insert_context(
+                id,
+                GpuTimingSource::Scene3d,
+                Correlation {
+                    logic_frame: 10,
+                    world: Some(world),
+                    role,
+                },
+            );
+        }
+        pending.insert_context(
+            4,
+            GpuTimingSource::Scene3d,
+            Correlation {
+                logic_frame: 11,
+                world: Some(next),
+                role: DesktopGpuPassRole::BaseLow,
+            },
+        );
+        for (id, role) in [
+            (3, DesktopGpuPassRole::Detail),
+            (1, DesktopGpuPassRole::BaseLow),
+            (2, DesktopGpuPassRole::BaseVisibility),
+        ] {
+            let context = pending.take(id, GpuTimingSource::Scene3d).unwrap();
+            assert_eq!(context.role, role);
+            assert_eq!(context.world, Some(world));
+            assert_eq!(context.logic_frame, 10);
+        }
+        let context = pending.take(4, GpuTimingSource::Scene3d).unwrap();
+        assert_eq!(context.world, Some(next));
+        assert_eq!(context.logic_frame, 11);
     }
 
     #[test]

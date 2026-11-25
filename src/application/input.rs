@@ -133,6 +133,13 @@ pub enum ButtonState {
 /// sample captured by each mouse edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InputEvent {
+    /// Position of a semantic occurrence in FrameRequest::with_text. Markers must
+    /// enumerate the entire text slice once in order; absent markers append text
+    /// after physical events. Markers count against the physical event limit.
+    Text {
+        /// Zero-based semantic occurrence index.
+        index: usize,
+    },
     /// A physical keyboard state change.
     Key {
         /// The physical location of the key.
@@ -951,7 +958,7 @@ impl<A: Action> InputState<A> {
                     self.record_edge(InputControl::MouseButton(button), state, None, delivery);
                 }
                 InputEvent::PointerMoved { sample } => self.pointer = Some(sample),
-                InputEvent::RelativePointerMotion { .. } => {}
+                InputEvent::RelativePointerMotion { .. } | InputEvent::Text { .. } => {}
                 InputEvent::MouseWheel { delta } => {
                     if !focus_lost {
                         self.frame_scrolls.push(PointerScrollEvent {
@@ -1006,7 +1013,8 @@ impl<A: Action> InputState<A> {
                         &mut report,
                     );
                 }
-                InputEvent::PointerMoved { .. }
+                InputEvent::Text { .. }
+                | InputEvent::PointerMoved { .. }
                 | InputEvent::RelativePointerMotion { .. }
                 | InputEvent::MouseWheel { .. } => {}
                 InputEvent::PointerLeft | InputEvent::FocusLost => {
@@ -2269,3 +2277,13 @@ mod tests {
         assert_eq!(input.fixed_input().pressed(TestAction::Enter).count(), 0);
     }
 }
+
+#[path = "input/text_entry.rs"]
+mod text_entry;
+pub use text_entry::EditorEvent;
+pub use text_entry::{EditCommand, FrameText, TextEvent, TextInputError, validate_text_events};
+pub(crate) use text_entry::{TextFrameState, validate_text_order};
+
+#[path = "input/modal.rs"]
+mod modal;
+pub use modal::{ModalKeyboard, RoutedKey};

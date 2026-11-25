@@ -115,3 +115,48 @@ pub(super) fn map_key(key: PhysicalKey) -> Option<PhysicalKeyCode> {
         PhysicalKey::Code(_) | PhysicalKey::Unidentified(_) => None,
     }
 }
+
+pub(super) fn semantic_text(
+    event: &winit::event::KeyEvent,
+    ime_enabled: bool,
+    modifiers: winit::keyboard::ModifiersState,
+) -> Result<Option<crate::input::TextEvent>, crate::input::TextInputError> {
+    use crate::input::{EditCommand, TextEvent};
+    use winit::keyboard::{Key, NamedKey};
+    let command = match &event.logical_key {
+        Key::Named(NamedKey::Backspace) => Some(EditCommand::Backspace),
+        Key::Named(NamedKey::Delete) => Some(EditCommand::Delete),
+        Key::Named(NamedKey::ArrowLeft) => Some(EditCommand::Left),
+        Key::Named(NamedKey::ArrowRight) => Some(EditCommand::Right),
+        Key::Named(NamedKey::Home) => Some(EditCommand::Home),
+        Key::Named(NamedKey::End) => Some(EditCommand::End),
+        Key::Named(NamedKey::Enter) => Some(EditCommand::Enter),
+        Key::Named(NamedKey::Escape) => Some(EditCommand::Escape),
+        _ => None,
+    };
+    // During IME ownership, native composition owns editing keys too.
+    if ime_enabled {
+        return Ok(None);
+    }
+    if let Some(command) = command {
+        return Ok(Some(TextEvent::Edit {
+            command,
+            extend_selection: modifiers.shift_key(),
+        }));
+    }
+    if modifiers.control_key() || modifiers.super_key() {
+        return Ok(None);
+    }
+    if event
+        .text
+        .as_ref()
+        .is_some_and(|text| text.len() > 16 * 1024)
+    {
+        return Err(crate::input::TextInputError::LimitExceeded);
+    }
+    Ok(event
+        .text
+        .as_ref()
+        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+        .map(|text| TextEvent::Commit(text.to_string())))
+}

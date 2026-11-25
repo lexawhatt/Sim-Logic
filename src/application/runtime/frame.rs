@@ -1,7 +1,5 @@
 //! BeginFrame-to-EndFrame ordering and fixed/frame stage failure handling.
 
-use std::time::Duration;
-
 use crate::{
     commands::{CommandCommitError, CommittedCommands, DirectIntentIssuer},
     headless::HeadlessRunner,
@@ -34,6 +32,11 @@ impl<A: Action> HeadlessRunner<A> {
             return FrameOutcome::Rejected(BeginFrameRejection::FrameIdentityExhausted);
         };
 
+        if let Err(error) = crate::input::validate_text_events(request.text())
+            .and_then(|()| crate::input::validate_text_order(request.events(), request.text()))
+        {
+            return FrameOutcome::Rejected(BeginFrameRejection::Text(error));
+        }
         let mut planned_time = self.time.clone();
         let timing = match planned_time.plan_frame(request.elapsed()) {
             Ok(timing) => timing,
@@ -238,12 +241,7 @@ impl<A: Action> HeadlessRunner<A> {
                 self.input.consume_fixed_delivery();
                 force_zero_extraction_alpha |= self.apply_committed_pause(pause);
             } else {
-                self.run_frame_update(
-                    request.elapsed(),
-                    request.viewport(),
-                    &mut report,
-                    &mut force_zero_extraction_alpha,
-                );
+                self.run_frame_update(&request, &mut report, &mut force_zero_extraction_alpha);
             }
         }
 
@@ -278,6 +276,9 @@ impl<A: Action> HeadlessRunner<A> {
             }
         }
 
+        self.active
+            .world
+            .insert_resource(crate::input::TextFrameState::default());
         self.input.end_frame();
         if let Some(mut issuer) = self.active.world.get_resource_mut::<DirectIntentIssuer>() {
             issuer.disable();
@@ -304,11 +305,33 @@ impl<A: Action> HeadlessRunner<A> {
 
     fn run_frame_update(
         &mut self,
-        elapsed: Duration,
-        viewport: sim_engine::LogicalViewport,
+        request: &FrameRequest<'_>,
         report: &mut LogicFrameReport,
         force_zero_extraction_alpha: &mut bool,
     ) {
+        let elapsed = request.elapsed();
+        let viewport = request.viewport();
+        let focus_lost = request
+            .events()
+            .iter()
+            .any(|event| matches!(event, crate::input::InputEvent::FocusLost));
+        self.active
+            .world
+            .insert_resource(crate::input::TextFrameState(
+                if focus_lost {
+                    vec![crate::input::TextEvent::Cancel]
+                } else {
+                    request.text().to_vec()
+                },
+                request
+                    .events()
+                    .iter()
+                    .copied()
+                    .filter(|event| {
+                        !focus_lost || !matches!(event, crate::input::InputEvent::Text { .. })
+                    })
+                    .collect(),
+            ));
         if !prepare_frame_snapshots(&mut self.active.world, &self.input) {
             report.failure = Some(FrameFailure::RuntimeInvariant);
             return;
@@ -320,7 +343,11 @@ impl<A: Action> HeadlessRunner<A> {
         self.active
             .world
             .insert_resource(FrameViewportState::new(viewport));
-        if let Err(error) = run_stage(&mut self.active.frame, &mut self.active.world) {
+        let frame_result = run_stage(&mut self.active.frame, &mut self.active.world);
+        self.active
+            .world
+            .insert_resource(crate::input::TextFrameState::default());
+        if let Err(error) = frame_result {
             let commands_intact = self.consume_failed_stage_tokens();
             report.failure = Some(if commands_intact {
                 match error {

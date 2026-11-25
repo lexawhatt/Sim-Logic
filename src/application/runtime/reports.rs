@@ -21,6 +21,7 @@ pub struct FrameRequest<'a> {
     elapsed: Duration,
     events: &'a [InputEvent],
     viewport: LogicalViewport,
+    text: &'a [crate::input::TextEvent],
 }
 
 impl<'a> FrameRequest<'a> {
@@ -35,7 +36,20 @@ impl<'a> FrameRequest<'a> {
             elapsed,
             events,
             viewport,
+            text: &[],
         }
+    }
+
+    /// Adds ordered semantic text input. Validation is atomic with the frame.
+    /// Focus loss discards the batch and delivers a single Cancel instead.
+    pub const fn with_text(mut self, text: &'a [crate::input::TextEvent]) -> Self {
+        self.text = text;
+        self
+    }
+
+    /// Returns the semantic text occurrences supplied by the host.
+    pub const fn text(&self) -> &'a [crate::input::TextEvent] {
+        self.text
     }
 
     /// Returns the unscaled wall delta supplied to the frame.
@@ -60,6 +74,8 @@ impl<'a> FrameRequest<'a> {
 /// Failure before any World System or canonical time/input state was changed.
 #[derive(Debug)]
 pub enum BeginFrameRejection {
+    /// Semantic text exceeded its budget or contained invalid selection offsets.
+    Text(crate::input::TextInputError),
     /// The application-frame identity counter is exhausted.
     FrameIdentityExhausted,
     /// Physical input collection rejected the complete event batch.
@@ -74,6 +90,7 @@ impl fmt::Display for BeginFrameRejection {
             Self::FrameIdentityExhausted => {
                 formatter.write_str("application frame identity space is exhausted")
             }
+            Self::Text(error) => write!(formatter, "{error}"),
             Self::Input(error) => write!(formatter, "frame input was rejected: {error}"),
             Self::Time(error) => write!(formatter, "frame time was rejected: {error}"),
         }
@@ -83,6 +100,7 @@ impl fmt::Display for BeginFrameRejection {
 impl Error for BeginFrameRejection {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Text(error) => Some(error),
             Self::Input(error) => Some(error),
             Self::Time(error) => Some(error),
             Self::FrameIdentityExhausted => None,

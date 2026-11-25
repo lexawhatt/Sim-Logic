@@ -3,6 +3,22 @@
 User-visible changes to Sim;Logic. This project is pre-1.0; minor releases may
 contain documented breaking changes.
 
+## Unreleased
+
+- Add opt-in Base/Detail rendering in the standard desktop host, per-layer
+  resolution/effects, cuboid fog participation, transactional targets and recovery.
+  Frozen pass/attachment limits, typed ContinueUi feedback, frame provenance and
+  per-role GPU diagnostics preserve the existing input and screen composition path.
+
+- Integrate the local sibling Sim;Engine 0.5.0-dev.1 working tree. The path
+  dependency is intentional for development; registry publication remains separate.
+- Add bounded, ordered UTF-8/IME input, logical editor commands, explicit paste
+  injection, frame-only delivery and modal keyboard ownership with cancellation.
+  InputEvent gains a Text marker; exhaustive consumer matches must account for it.
+- Expose managed-font CPU shaping/rasterization and bounded LTR surface layout
+  with exact Engine pen carets, cluster-boundary errors and selection spans for application-owned pages.
+- Document bounded background IO handoff, generation filtering and shutdown.
+
 ## 0.1.0 - 2026-09-26
 
 Initial version, using the official Sim;Engine 0.4.2 release for rendering.

@@ -88,6 +88,8 @@ pub enum WindowModeStatus {
 /// Native cursor themes may substitute the default for an unavailable shape.
 #[derive(Debug, Default)]
 pub struct WindowControls {
+    text_input: bool,
+    paste: Vec<crate::input::TextEvent>,
     mode: Option<WindowMode>,
     cursor: Option<CursorShape>,
     mode_status: WindowModeStatus,
@@ -95,6 +97,37 @@ pub struct WindowControls {
 }
 
 impl WindowControls {
+    /// Queues caller-authorized clipboard UTF-8 for the next desktop frame.
+    /// Does not read the OS clipboard. Per-event and per-frame text limits apply;
+    /// rejection preserves the queue. Closing text entry discards pending paste.
+    pub fn paste_text(&mut self, text: String) -> Result<(), crate::input::TextInputError> {
+        let event = crate::input::TextEvent::Paste(text);
+        crate::input::validate_text_events(std::slice::from_ref(&event))?;
+        self.paste.push(event);
+        if let Err(error) = crate::input::validate_text_events(&self.paste) {
+            self.paste.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+    #[cfg(feature = "desktop")]
+    pub(crate) fn take_paste(&mut self) -> Vec<crate::input::TextEvent> {
+        std::mem::take(&mut self.paste)
+    }
+
+    /// Enables native text/IME collection after this frame (off by default).
+    /// Applications must route physical actions while their editor owns focus.
+    pub fn set_text_input(&mut self, enabled: bool) {
+        self.text_input = enabled;
+        if !enabled {
+            self.paste.clear();
+        }
+    }
+    /// Returns the requested native text-entry mode.
+    pub const fn text_input(&self) -> bool {
+        self.text_input
+    }
+
     /// Requests a mode, or explicitly retries a previously ignored request.
     pub fn request_mode(&mut self, mode: WindowMode) {
         self.mode = Some(mode);

@@ -81,9 +81,19 @@ pub struct MeshVisual3d {
     surface: SurfaceStyle3d,
     texture: Option<TextureVisual3d>,
     visible: bool,
+    render_layer: super::RenderLayer3d,
 }
 
 impl MeshVisual3d {
+    /// Per-instance layered assignment; ordinary rendering ignores this metadata.
+    pub const fn render_layer(&self) -> super::RenderLayer3d {
+        self.render_layer
+    }
+    /// Changes layer at the next extraction boundary without cloning the asset.
+    pub fn set_render_layer(&mut self, layer: super::RenderLayer3d) {
+        self.render_layer = layer;
+    }
+
     /// Creates an opaque mesh instance after CPU geometry validation.
     pub fn new(
         asset: MeshAsset3d,
@@ -109,6 +119,7 @@ impl MeshVisual3d {
             surface,
             texture: None,
             visible: true,
+            render_layer: super::RenderLayer3d::Base,
         })
     }
 

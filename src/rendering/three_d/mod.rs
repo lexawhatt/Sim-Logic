@@ -8,6 +8,12 @@
 //! desktop bridge attributes object-specific failures to the source entity.
 
 mod extraction;
+mod layered;
+pub use layered::{
+    LayerResolution3d, LayerResolutionFallback3d, LayerSettings3d, LayeredDimensions3d,
+    LayeredFailurePolicy3d, LayeredPresentationFeedback, LayeredPresentationRejection,
+    LayeredRejection3d, LayeredRenderLimits3d, LayeredView3d, RenderLayer3d,
+};
 mod mesh;
 mod mesh_extraction;
 mod texture;

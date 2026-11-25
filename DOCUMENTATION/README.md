@@ -22,6 +22,8 @@ a desktop example to testing the same application without a window.
   velocity, acceleration, camera following and overlap queries.
 - [Input](guides/Pointer-Input.md): keys and mouse buttons, click-time positions,
   screen-to-world coordinates and cancellation on focus loss.
+- [Text entry and modal routing](guides/Text-Entry.md): Unicode/IME, paste,
+  ordered editor input and bounded background file IO.
 - [Audio output](guides/Audio-Output.md): optional device output, its lifetime,
   buffer settings and diagnostics.
 
@@ -72,3 +74,6 @@ pinned exactly. The guides distinguish supported paths from remaining test gaps.
 Headless use needs neither a window nor a GPU. Desktop examples have been
 checked on Linux/Vulkan, not every platform. The [repository README](../README.md)
 is the short product overview; the topic guides hold the detailed recipes.
+
+The [3D guide](rendering/ThreeD.md#two-resolution-rendering-in-the-standard-desktop-host)
+includes Base/Detail rendering and the standard-host `layered_view` example.

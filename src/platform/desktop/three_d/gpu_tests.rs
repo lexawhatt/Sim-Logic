@@ -27,6 +27,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[path = "gpu_tests/layered.rs"]
+mod layered;
 #[path = "gpu_tests/mutations.rs"]
 mod mutations;
 
@@ -221,6 +223,7 @@ fn prepare(game: &Game, cache: &mut DesktopThreeD, renderer: &mut WgpuRenderer) 
 
 fn object_id(cache: &DesktopThreeD, source: LogicEntity) -> LogicResult<Object3dId> {
     cache
+        .ordinary
         .custom
         .object_sources()
         .find_map(|(id, current, _)| (current == source).then_some(id))
@@ -229,6 +232,7 @@ fn object_id(cache: &DesktopThreeD, source: LogicEntity) -> LogicResult<Object3d
 
 fn scene(cache: &DesktopThreeD) -> LogicResult<&Scene3d> {
     cache
+        .ordinary
         .scene
         .as_ref()
         .ok_or_else(|| "retained scene missing".into())
@@ -364,6 +368,7 @@ fn run(renderer: &mut WgpuRenderer) -> LogicResult {
 
 #[derive(Default)]
 struct Fixture {
+    layered: bool,
     result: Option<LogicResult>,
 }
 
@@ -382,7 +387,11 @@ impl ApplicationHandler for Fixture {
                 )?,
             );
             let mut renderer = pollster::block_on(WgpuRenderer::new(window, SIZE, SIZE))?;
-            run(&mut renderer)
+            if self.layered {
+                layered::run(&mut renderer)
+            } else {
+                run(&mut renderer)
+            }
         })());
         event_loop.exit();
     }
@@ -395,6 +404,19 @@ fn managed_mesh_texture_revisions_and_recovery() -> LogicResult {
     let mut builder = EventLoop::builder();
     builder.with_x11().with_any_thread(true);
     let mut fixture = Fixture::default();
+    builder.build()?.run_app(&mut fixture)?;
+    fixture.result.ok_or("renderer never initialized")?
+}
+
+#[test]
+#[ignore = "manual Linux/X11/Vulkan layered bridge capture, resize and device replacement"]
+fn layered_bridge_capture_resize_and_recovery() -> LogicResult {
+    let mut builder = EventLoop::builder();
+    builder.with_x11().with_any_thread(true);
+    let mut fixture = Fixture {
+        layered: true,
+        ..Fixture::default()
+    };
     builder.build()?.run_app(&mut fixture)?;
     fixture.result.ok_or("renderer never initialized")?
 }

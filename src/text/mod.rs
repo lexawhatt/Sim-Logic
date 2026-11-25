@@ -48,3 +48,6 @@ pub use visual::{ScreenTextVisual, TextAlignment, TextMetrics};
 
 #[cfg(test)]
 mod tests;
+
+mod surface;
+pub use surface::{SurfaceTextError, SurfaceTextLine, layout_surface_text};

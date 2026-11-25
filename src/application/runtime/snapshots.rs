@@ -5,6 +5,7 @@ use bevy_ecs::world::World;
 use crate::input::{Action, FixedInputState, FrameInputState, InputState};
 
 pub(super) fn clear_frame_snapshot<A: Action>(world: &mut World) -> bool {
+    world.insert_resource(crate::input::TextFrameState::default());
     let Some(mut snapshot) = world.get_resource_mut::<FrameInputState<A>>() else {
         return false;
     };

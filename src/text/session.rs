@@ -56,7 +56,12 @@ impl<'font> TextPreparationSession<'font> {
         self.engine.clear_scratch();
     }
 
-    pub(super) fn shape_line(&mut self, text: &str) -> Result<ShapedLine, TextError> {
+    /// Shapes one line for any host-owned surface, independently of screen widgets.
+    /// Returned glyph clusters are UTF-8 offsets, not grapheme caret positions.
+    /// The snapshot owns its text and shares immutable font storage; subsequent
+    /// session calls and GPU atlas rebuilds cannot invalidate it. Font/layout
+    /// budgets from the registration apply. Newlines and missing glyphs reject.
+    pub fn shape_line(&mut self, text: &str) -> Result<ShapedLine, TextError> {
         Ok(self.engine.shape_line(text)?)
     }
 }

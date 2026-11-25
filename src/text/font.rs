@@ -58,6 +58,23 @@ impl TextFont {
         TextPreparationSession::new(self)
     }
 
+    /// Rasterizes a font-local glyph for a caller-owned image or 3D page atlas.
+    /// Scale is physical pixels per logical pixel. Coverage is linear alpha;
+    /// bearings are physical pixels relative to the baseline. The caller owns
+    /// the bitmap and must bound aggregate cache bytes and invalidate its cache
+    /// on font/style/scale changes. No screen widget or GPU atlas is required.
+    pub fn rasterize_glyph(
+        &self,
+        glyph: u16,
+        scale: f32,
+    ) -> Result<sim_engine::RasterizedGlyph, TextError> {
+        Ok(self.face().rasterize_glyph(
+            glyph,
+            &self.settings().style(scale)?,
+            &self.settings().layout_budget(),
+        )?)
+    }
+
     pub(crate) fn face(&self) -> &FontFace {
         &self.data.face
     }

@@ -22,9 +22,20 @@ pub struct ThreeDRenderLimits {
     max_mesh_source_bytes: usize,
     max_texture_source_bytes: usize,
     max_texture_gpu_bytes: usize,
+    layered: super::LayeredRenderLimits3d,
 }
 
 impl ThreeDRenderLimits {
+    /// Enables layered submission with explicit additional pass/attachment caps.
+    pub const fn with_layered_limits(mut self, limits: super::LayeredRenderLimits3d) -> Self {
+        self.layered = limits;
+        self
+    }
+    /// Additional layered allowances; zero defaults prohibit allocation/submission.
+    pub const fn layered_limits(self) -> super::LayeredRenderLimits3d {
+        self.layered
+    }
+
     /// Sets exact inclusive object, surface-triangle, and physical-pixel caps.
     pub const fn new(max_cuboids: usize, max_triangles: usize, max_target_pixels: u64) -> Self {
         Self {
@@ -35,6 +46,7 @@ impl ThreeDRenderLimits {
             max_mesh_source_bytes: 0,
             max_texture_source_bytes: 0,
             max_texture_gpu_bytes: 0,
+            layered: super::LayeredRenderLimits3d::new(0, 0, 0, 0, 0),
         }
     }
 
@@ -160,6 +172,18 @@ pub struct ThreeDSnapshot<'a> {
 }
 
 impl<'a> ThreeDSnapshot<'a> {
+    #[cfg(feature = "desktop")]
+    pub(crate) fn from_parts(
+        view: View3d,
+        cuboids: &'a [ResolvedCuboid3d],
+        meshes: &'a [ResolvedMesh3d],
+    ) -> Self {
+        Self {
+            view,
+            cuboids,
+            meshes,
+        }
+    }
     /// Returns the enabled camera, environment and normalized RGBA clear descriptor.
     pub const fn view(self) -> View3d {
         self.view

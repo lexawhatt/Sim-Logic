@@ -610,6 +610,45 @@ pub(super) fn present(
     budget: FrameBudget,
     target: Option<&RenderTarget2d>,
 ) -> Result<FrameReport, ScreenPresentationError> {
+    compose(
+        renderer,
+        extracted,
+        registry,
+        images,
+        budget,
+        (target, None),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn present_to_target(
+    renderer: &mut WgpuRenderer,
+    extracted: &ExtractedFrame,
+    registry: &ImageAssetRegistry,
+    images: &mut DesktopImages,
+    budget: FrameBudget,
+    targets: (Option<&RenderTarget2d>, &RenderTarget2d),
+) -> Result<FrameReport, ScreenPresentationError> {
+    compose(
+        renderer,
+        extracted,
+        registry,
+        images,
+        budget,
+        (targets.0, Some(targets.1)),
+    )
+}
+
+// Tests use the identical draw plan with an explicit offscreen destination.
+fn compose(
+    renderer: &mut WgpuRenderer,
+    extracted: &ExtractedFrame,
+    registry: &ImageAssetRegistry,
+    images: &mut DesktopImages,
+    budget: FrameBudget,
+    targets: (Option<&RenderTarget2d>, Option<&RenderTarget2d>),
+) -> Result<FrameReport, ScreenPresentationError> {
+    let (target, destination) = targets;
     preflight_with_target(
         extracted,
         registry,
@@ -741,7 +780,11 @@ pub(super) fn present(
             }
         }
     }
-    Ok(frame.present()?)
+    Ok(if let Some(destination) = destination {
+        frame.render_to_target(destination)?
+    } else {
+        frame.present()?
+    })
 }
 
 #[cfg(test)]

@@ -23,9 +23,28 @@ pub struct CuboidVisual3d {
     color: Color,
     wireframe: Option<WireframeStyle3d>,
     visible: bool,
+    render_layer: super::RenderLayer3d,
+    fog_enabled: bool,
 }
 
 impl CuboidVisual3d {
+    /// Enables this opaque surface's participation in View3d fog (default false).
+    pub fn set_fog_enabled(&mut self, enabled: bool) {
+        self.fog_enabled = enabled;
+    }
+    /// Returns material fog participation, independent of layer assignment.
+    pub const fn fog_enabled(self) -> bool {
+        self.fog_enabled
+    }
+    /// Per-instance layered assignment; ordinary rendering ignores this metadata.
+    pub const fn render_layer(&self) -> super::RenderLayer3d {
+        self.render_layer
+    }
+    /// Changes layer at the next extraction boundary without cloning the asset.
+    pub fn set_render_layer(&mut self, layer: super::RenderLayer3d) {
+        self.render_layer = layer;
+    }
+
     /// Creates an axis-aligned cuboid with finite, representable solid geometry.
     ///
     /// Every size component must be positive; color must be normalized and
@@ -36,6 +55,8 @@ impl CuboidVisual3d {
             color,
             wireframe: None,
             visible: true,
+            render_layer: super::RenderLayer3d::Base,
+            fog_enabled: false,
         };
         visual.validate()?;
         Ok(visual)
@@ -102,7 +123,7 @@ impl CuboidVisual3d {
     }
 
     pub(crate) fn validate(self) -> Result<(), CuboidVisualError> {
-        SurfaceStyle3d::opaque(self.color)?;
+        SurfaceStyle3d::opaque(self.color)?.with_fog(self.fog_enabled);
         let corners = self.corners()?;
         for triangle in TRIANGLES.chunks_exact(3) {
             let a = coordinates(corners[triangle[0] as usize]);
@@ -124,7 +145,8 @@ impl CuboidVisual3d {
 
     #[cfg(feature = "desktop")]
     pub(crate) fn style(self) -> Result<MeshStyle3d, CuboidVisualError> {
-        let style = MeshStyle3d::surface(SurfaceStyle3d::opaque(self.color)?);
+        let style =
+            MeshStyle3d::surface(SurfaceStyle3d::opaque(self.color)?.with_fog(self.fog_enabled));
         Ok(match self.wireframe {
             Some(wireframe) => style.with_wireframe(wireframe),
             None => style,

@@ -36,9 +36,20 @@ pub struct View3d {
     lighting: Lighting3d,
     fog: Option<Fog3d>,
     enabled: bool,
+    layered: Option<super::LayeredView3d>,
 }
 
 impl View3d {
+    /// Returns optional layered rendering settings; None uses ordinary 3D.
+    pub const fn layered(self) -> Option<super::LayeredView3d> {
+        self.layered
+    }
+    /// Selects per-layer settings without changing camera/environment or ordinary
+    /// surface policy. Physical/device admission occurs before desktop submission.
+    pub fn set_layered(&mut self, settings: Option<super::LayeredView3d>) {
+        self.layered = settings;
+    }
+
     /// Creates an enabled view with 60-degree vertical FOV and a 0.1..1000 range.
     ///
     /// Position and target must form a valid camera with positive-y up.
@@ -55,6 +66,7 @@ impl View3d {
             lighting: Lighting3d::default(),
             fog: None,
             enabled: true,
+            layered: None,
         };
         view.validate()?;
         Ok(view)

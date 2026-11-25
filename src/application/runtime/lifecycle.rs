@@ -212,6 +212,7 @@ impl<A: Action> HeadlessRunner<A> {
         let managed_entities = committed.live_entities;
         snap_interpolation(&mut world);
         world.insert_resource(FrameInputState::<A>::empty());
+        world.insert_resource(crate::input::TextFrameState::default());
         world.insert_resource(FixedInputState::<A>::empty());
         world.insert_resource(FrameTimeState::new(Duration::ZERO, false));
         world.insert_resource(FixedTimeState::initial(self.config.time().fixed_step()));

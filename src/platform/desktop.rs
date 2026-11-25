@@ -39,8 +39,11 @@ pub use pointer::DesktopPointerError;
 pub use sim_engine::FrameCacheBudget;
 #[cfg(feature = "text")]
 pub use text::{DesktopTextError, DesktopTextUpdates};
-pub use three_d::{DesktopThreeDError, DesktopThreeDUpdates};
-pub use timing::{DesktopGpuTimingSample, DesktopGpuTimings};
+pub use three_d::{
+    DesktopLayeredFrame, DesktopLayeredProvenance, DesktopLayeredStatistics, DesktopThreeDError,
+    DesktopThreeDUpdates, LayeredTargetAction,
+};
+pub use timing::{DesktopGpuPassRole, DesktopGpuTimingSample, DesktopGpuTimings};
 
 use std::{error::Error, fmt, sync::Arc, time::Instant};
 
@@ -303,6 +306,12 @@ pub struct DesktopRunReport {
     last_text_updates: Option<DesktopTextUpdates>,
     renderer_description: Option<String>,
     last_three_d_frame: Option<Mesh3dRenderReport>,
+    last_layered_frame: Option<DesktopLayeredFrame>,
+    last_layered_rejection: Option<crate::three_d::LayeredPresentationRejection>,
+    layered_rejections: u64,
+    layered_statistics: DesktopLayeredStatistics,
+    layered_configuration: Option<(WorldGeneration, crate::three_d::LayeredView3d)>,
+    layered_configuration_revision: u64,
     last_three_d_updates: Option<DesktopThreeDUpdates>,
     three_d_updates: DesktopThreeDUpdates,
     gpu_timings: DesktopGpuTimings,
@@ -379,10 +388,31 @@ impl DesktopRunReport {
         self.last_render_frame
     }
 
-    /// Returns the latest frame's separate successful 3D depth-prepass report.
-    ///
-    /// This GPU work is outside FrameReport's composition budget and timings.
-    /// It may have been submitted even if the later surface frame was skipped.
+    /// Last complete layered submission with explicit origin. Check the
+    /// window render status separately; submission does not guarantee presentation.
+    pub const fn last_layered_frame(&self) -> Option<DesktopLayeredFrame> {
+        self.last_layered_frame
+    }
+
+    /// Last rejected layered contribution; cleared after a fully presented layered frame.
+    pub const fn last_layered_rejection(
+        &self,
+    ) -> Option<crate::three_d::LayeredPresentationRejection> {
+        self.last_layered_rejection
+    }
+
+    /// Number of expected layered rejections handled by ContinueUi.
+    pub const fn layered_rejections(&self) -> u64 {
+        self.layered_rejections
+    }
+
+    /// Successful layered attachment/restore lifecycle totals across this run.
+    pub const fn layered_statistics(&self) -> DesktopLayeredStatistics {
+        self.layered_statistics
+    }
+
+    /// Returns the latest presentation attempt's successful ordinary 3D prepass.
+    /// This work is outside FrameReport's composition budget and may precede a skipped present.
     /// A frame without an enabled 3D view resets this value to None.
     pub const fn last_three_d_frame(&self) -> Option<Mesh3dRenderReport> {
         self.last_three_d_frame
@@ -418,6 +448,8 @@ impl DesktopRunReport {
 /// Fatal reason the one-window desktop loop stopped.
 #[derive(Debug)]
 pub enum DesktopRunError {
+    /// Initial layered view requested ContinueUi without its feedback resource.
+    LayeredConfiguration(DesktopThreeDError),
     /// The shared logical runner could not be built.
     Runner(RunnerBuildError),
     /// Winit could not create or drive its event loop.
@@ -510,6 +542,9 @@ pub enum DesktopRunError {
 impl fmt::Display for DesktopRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::LayeredConfiguration(error) => {
+                write!(formatter, "layered configuration failed: {error}")
+            }
             Self::Runner(error) => write!(formatter, "logical runner failed: {error}"),
             Self::EventLoop(error) => write!(formatter, "desktop event loop failed: {error}"),
             Self::Window(error) => write!(formatter, "desktop window failed: {error}"),
@@ -567,6 +602,7 @@ impl fmt::Display for DesktopRunError {
 impl Error for DesktopRunError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::LayeredConfiguration(error) => Some(error),
             Self::Runner(error) => Some(error),
             Self::EventLoop(error) => Some(error),
             Self::Window(error) => Some(error),
@@ -604,6 +640,20 @@ pub(crate) fn run<A: Action>(
     let runner = application
         .build_headless(initial)
         .map_err(DesktopRunError::Runner)?;
+    if runner
+        .resource::<crate::three_d::View3d>()
+        .and_then(|view| view.layered())
+        .is_some_and(|settings| {
+            settings.failure_policy() == crate::three_d::LayeredFailurePolicy3d::ContinueUi
+        })
+        && runner
+            .app_resource::<crate::three_d::LayeredPresentationFeedback>()
+            .is_none()
+    {
+        return Err(DesktopRunError::LayeredConfiguration(
+            DesktopThreeDError::MissingLayeredFeedback,
+        ));
+    }
     let event_loop = EventLoop::new().map_err(DesktopRunError::EventLoop)?;
     let mut desktop = DesktopHost::new(
         runner,
@@ -637,6 +687,11 @@ struct DesktopHost<A: Action> {
     three_d: DesktopThreeD,
     three_d_limits: ThreeDRenderLimits,
     pending_events: Vec<InputEvent>,
+    pending_text: Vec<crate::input::TextEvent>,
+    text_enabled: bool,
+    text_focused: bool,
+    ime_enabled: bool,
+    modifiers: winit::keyboard::ModifiersState,
     input_failure: Option<InputBufferFailure>,
     held_keys: [bool; SUPPORTED_PHYSICAL_KEY_COUNT],
     pointer_geometry: DesktopPointerGeometry,
@@ -670,6 +725,11 @@ impl<A: Action> DesktopHost<A> {
             three_d: DesktopThreeD::new(),
             three_d_limits,
             pending_events: Vec::new(),
+            pending_text: Vec::new(),
+            text_enabled: false,
+            text_focused: true,
+            ime_enabled: false,
+            modifiers: winit::keyboard::ModifiersState::empty(),
             input_failure: None,
             held_keys: [false; SUPPORTED_PHYSICAL_KEY_COUNT],
             pointer_geometry: DesktopPointerGeometry::empty(),
@@ -748,6 +808,52 @@ impl<A: Action> DesktopHost<A> {
     fn collect_gpu_timings(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             self.report.gpu_timings.collect(renderer);
+        }
+    }
+
+    fn synchronize_text_input(&mut self) {
+        let enabled = self
+            .runner
+            .app_resource::<crate::window::WindowControls>()
+            .is_some_and(crate::window::WindowControls::text_input);
+        if enabled != self.text_enabled {
+            self.text_enabled = enabled;
+            self.ime_enabled = false;
+            if let Some(window) = &self.window {
+                window.set_ime_allowed(enabled);
+            }
+            if !enabled {
+                self.pending_text.clear();
+                self.pending_events
+                    .retain(|event| !matches!(event, InputEvent::Text { .. }));
+                self.pending_text.push(crate::input::TextEvent::Cancel);
+                self.collect_input(InputEvent::Text { index: 0 });
+            }
+        }
+    }
+
+    fn collect_text(&mut self, event: crate::input::TextEvent) {
+        if !self.text_enabled
+            || (!self.text_focused && !matches!(event, crate::input::TextEvent::Cancel))
+            || self.input_failure.is_some()
+        {
+            return;
+        }
+        if let Err(error) = crate::input::validate_text_events(std::slice::from_ref(&event)) {
+            self.input_failure = Some(InputBufferFailure::Text(error));
+            return;
+        }
+        if self.pending_text.try_reserve(1).is_err() {
+            self.input_failure = Some(InputBufferFailure::Allocation);
+            return;
+        }
+        let index = self.pending_text.len();
+        self.pending_text.push(event);
+        if let Err(error) = crate::input::validate_text_events(&self.pending_text) {
+            self.pending_text.pop();
+            self.input_failure = Some(InputBufferFailure::Text(error));
+        } else {
+            self.collect_input(InputEvent::Text { index });
         }
     }
 
@@ -873,6 +979,13 @@ impl<A: Action> DesktopHost<A> {
     }
 
     fn collect_focus_loss(&mut self) {
+        self.pending_text.clear();
+        self.pending_events
+            .retain(|event| !matches!(event, InputEvent::Text { .. }));
+        self.collect_text(crate::input::TextEvent::Cancel);
+        self.text_focused = false;
+        self.ime_enabled = false;
+        self.modifiers = winit::keyboard::ModifiersState::empty();
         self.capture.set_focused(false);
         self.release_capture();
         // The shared core owns cancellation expansion and its exact ordered
@@ -893,6 +1006,9 @@ impl<A: Action> DesktopHost<A> {
         self.collect_gpu_timings();
         if let Some(failure) = self.input_failure {
             let error = match failure {
+                InputBufferFailure::Text(error) => {
+                    DesktopRunError::BeginFrame(crate::headless::BeginFrameRejection::Text(error))
+                }
                 InputBufferFailure::Limit => DesktopRunError::InputEventLimitExceeded {
                     limit: self.input_event_limit,
                 },
@@ -920,9 +1036,20 @@ impl<A: Action> DesktopHost<A> {
         self.last_frame = now;
         let outcome = advance_shared_core(
             &mut self.runner,
-            FrameRequest::new(elapsed, &self.pending_events, viewport),
+            FrameRequest::new(elapsed, &self.pending_events, viewport)
+                .with_text(&self.pending_text),
         );
         self.pending_events.clear();
+        self.pending_text.clear();
+        self.synchronize_text_input();
+        if let Some(paste) = self
+            .runner
+            .with_window_controls(|controls| controls.take_paste())
+        {
+            for event in paste {
+                self.collect_text(event);
+            }
+        }
 
         let report = match outcome {
             FrameOutcome::Rejected(error) => {
@@ -1004,6 +1131,10 @@ impl<A: Action> DesktopHost<A> {
             PresentationDecision::PresentWorld => {}
         }
 
+        let layered_feedback = self
+            .runner
+            .app_resource::<crate::three_d::LayeredPresentationFeedback>()
+            .is_some();
         let Some(extracted) = self.runner.extracted_frame() else {
             self.stop(event_loop, DesktopRunError::RuntimeInvariant);
             return;
@@ -1012,6 +1143,7 @@ impl<A: Action> DesktopHost<A> {
             self.stop(event_loop, DesktopRunError::RuntimeInvariant);
             return;
         };
+        self.report.last_layered_frame = None;
         self.report.last_three_d_frame = None;
         self.report.last_three_d_updates = None;
         self.report.last_screen_updates = None;
@@ -1019,43 +1151,126 @@ impl<A: Action> DesktopHost<A> {
         {
             self.report.last_text_updates = None;
         }
+        self.three_d
+            .begin_world(renderer, extracted.world_generation());
         if extracted.three_d().is_none() {
             // A World with no active 3D view must not keep a retired World's
             // chunk revisions alive through renderer caches.
-            if self.three_d.color_target().is_some() {
-                renderer.clear_frame_cache();
-            }
+            renderer.clear_frame_cache();
             self.three_d.clear();
         }
+        let mut layered_rejection = None;
         let presentation = if let Some(snapshot) = extracted.three_d() {
-            (|| {
+            let settings = snapshot.view().layered();
+            let configuration = settings.map(|settings| (active_generation, settings));
+            if configuration != self.report.layered_configuration {
+                self.report.layered_configuration = configuration;
+                self.report.layered_configuration_revision =
+                    self.report.layered_configuration_revision.saturating_add(1);
+            }
+            let continue_ui = settings.is_some_and(|s| {
+                s.failure_policy() == crate::three_d::LayeredFailurePolicy3d::ContinueUi
+            });
+            let prepared = (|| {
+                if continue_ui && !layered_feedback {
+                    return Err(ScreenPresentationError::ThreeD(
+                        DesktopThreeDError::MissingLayeredFeedback,
+                    ));
+                }
+                let color_bytes = if let Some(settings) = settings {
+                    snapshot
+                        .validate_layered(self.three_d_limits.layered_limits())
+                        .map_err(DesktopThreeDError::LayeredRejected)?;
+                    let viewport = renderer
+                        .logical_viewport()
+                        .map_err(DesktopThreeDError::Viewport)?;
+                    let dimensions = settings
+                        .resolve(renderer.size(), viewport)
+                        .map_err(DesktopThreeDError::LayeredRejected)?
+                        .ok_or(DesktopThreeDError::InvalidTargetLayout)?;
+                    three_d::color_target_bytes_at(renderer, dimensions.detail)?
+                } else {
+                    three_d::color_target_bytes(renderer)?
+                };
                 self.images.preflight_three_d(
                     extracted,
                     self.runner.image_assets(),
                     self.frame_budget,
-                    three_d::color_target_bytes(renderer)?,
+                    color_bytes,
                 )?;
-                let three_d_report =
-                    self.three_d
-                        .prepare(renderer, snapshot, self.three_d_limits)?;
-                self.report.gpu_timings.submitted(
-                    report.frame_index(),
-                    GpuTimingSource::Scene3d,
-                    three_d_report.gpu_timing_id(),
-                );
-                self.report.last_three_d_frame = Some(three_d_report);
+                if settings.is_some() {
+                    let layered = self.three_d.prepare_layered(
+                        renderer,
+                        snapshot,
+                        self.three_d_limits,
+                        DesktopLayeredProvenance {
+                            frame_index: report.frame_index(),
+                            world: active_generation,
+                            device_generation: self.report.device_recoveries,
+                            configuration_revision: self.report.layered_configuration_revision,
+                        },
+                    )?;
+                    for (role, pass) in [
+                        (DesktopGpuPassRole::BaseLow, layered.low),
+                        (DesktopGpuPassRole::BaseVisibility, layered.base_visibility),
+                        (DesktopGpuPassRole::Detail, layered.detail),
+                    ] {
+                        self.report.gpu_timings.submitted_pass(
+                            report.frame_index(),
+                            active_generation,
+                            role,
+                            GpuTimingSource::Scene3d,
+                            pass.gpu_timing_id(),
+                        );
+                    }
+                    self.report.layered_statistics.record(layered.target_action);
+                    self.report.last_layered_frame = Some(layered);
+                } else {
+                    let three_d_report =
+                        self.three_d
+                            .prepare(renderer, snapshot, self.three_d_limits)?;
+                    self.report.gpu_timings.submitted_pass(
+                        report.frame_index(),
+                        active_generation,
+                        DesktopGpuPassRole::Ordinary3d,
+                        GpuTimingSource::Scene3d,
+                        three_d_report.gpu_timing_id(),
+                    );
+                    self.report.last_three_d_frame = Some(three_d_report);
+                }
                 let updates = self.three_d.updates();
                 self.report.last_three_d_updates = Some(updates);
                 self.report.three_d_updates.accumulate(updates);
-                images::present(
+                Ok(())
+            })();
+            match prepared {
+                Ok(()) => images::present(
                     renderer,
                     extracted,
                     self.runner.image_assets(),
                     &mut self.images,
                     self.frame_budget,
                     self.three_d.color_target(),
-                )
-            })()
+                ),
+                Err(ScreenPresentationError::ThreeD(DesktopThreeDError::LayeredRejected(
+                    reason,
+                ))) if continue_ui && layered_feedback => {
+                    layered_rejection = Some(crate::three_d::LayeredPresentationRejection {
+                        frame_index: report.frame_index(),
+                        generation: active_generation,
+                        reason,
+                    });
+                    images::present(
+                        renderer,
+                        extracted,
+                        self.runner.image_assets(),
+                        &mut self.images,
+                        self.frame_budget,
+                        None,
+                    )
+                }
+                Err(error) => Err(error),
+            }
         } else if !images::needs_managed_presentation(extracted, &self.images) {
             present_extracted(renderer, extracted, self.frame_budget)
                 .map_err(ScreenPresentationError::Composition)
@@ -1069,6 +1284,12 @@ impl<A: Action> DesktopHost<A> {
                 None,
             )
         };
+        if let Some(rejection) = layered_rejection {
+            self.runner
+                .with_layered_feedback(|feedback| feedback.reject(rejection));
+            self.report.last_layered_rejection = Some(rejection);
+            self.report.layered_rejections = self.report.layered_rejections.saturating_add(1);
+        }
         let presentation = match presentation {
             Ok(report) => Ok(report),
             Err(ScreenPresentationError::Composition(error)) => {
@@ -1124,14 +1345,21 @@ impl<A: Action> DesktopHost<A> {
                 {
                     self.report.last_text_updates = Some(self.images.texts.updates);
                 }
-                self.report.gpu_timings.submitted(
+                self.report.gpu_timings.submitted_pass(
                     report.frame_index(),
+                    active_generation,
+                    DesktopGpuPassRole::WindowComposition,
                     GpuTimingSource::FrameComposer,
                     render_report.gpu_timing_id(),
                 );
                 self.report.last_render_frame = Some(render_report);
                 match render_report.status() {
                     RenderStatus::Drawn => {
+                        if self.report.last_layered_frame.is_some() {
+                            self.runner
+                                .with_layered_feedback(|feedback| feedback.presented());
+                            self.report.last_layered_rejection = None;
+                        }
                         self.runner
                             .with_presentation_feedback(|feedback| feedback.presented());
                         self.report.drawn_frames = self.report.drawn_frames.saturating_add(1);
@@ -1182,6 +1410,8 @@ impl<A: Action> DesktopHost<A> {
                             {
                                 self.report.last_text_updates = None;
                             }
+                            let restoring_layered = self.three_d.has_layered_scenes();
+                            self.report.last_layered_frame = None;
                             self.report.last_three_d_frame = None;
                             self.report.last_three_d_updates = None;
                             if let Err(error) = self.three_d.restore(renderer) {
@@ -1194,6 +1424,11 @@ impl<A: Action> DesktopHost<A> {
                                 );
                                 return;
                             }
+                            if restoring_layered {
+                                self.report.layered_statistics.restored =
+                                    self.report.layered_statistics.restored.saturating_add(1);
+                            }
+
                             if reset_wall_clock_on_success {
                                 self.last_frame = Instant::now();
                             }
@@ -1325,6 +1560,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
         self.last_frame = Instant::now();
         self.capture.attach(Arc::clone(&window));
         self.window = Some(window);
+        self.synchronize_text_input();
         self.images.clear();
         self.three_d.clear();
         self.renderer = Some(renderer);
@@ -1357,7 +1593,40 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
                 event,
                 is_synthetic,
                 ..
-            } => self.collect_key(event.physical_key, event.state, is_synthetic, event.repeat),
+            } => {
+                self.collect_key(event.physical_key, event.state, is_synthetic, event.repeat);
+                if self.text_enabled
+                    && self.text_focused
+                    && !is_synthetic
+                    && event.state == ElementState::Pressed
+                {
+                    match keyboard::semantic_text(&event, self.ime_enabled, self.modifiers) {
+                        Ok(Some(text)) => self.collect_text(text),
+                        Ok(None) => {}
+                        Err(error) => self.input_failure = Some(InputBufferFailure::Text(error)),
+                    }
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            WindowEvent::Ime(ime) if self.text_enabled && self.text_focused => {
+                use crate::input::TextEvent;
+                use winit::event::Ime;
+                match ime {
+                    Ime::Enabled => self.ime_enabled = false,
+                    Ime::Disabled => {
+                        self.ime_enabled = false;
+                        self.collect_text(TextEvent::Cancel);
+                    }
+                    Ime::Commit(text) => {
+                        self.ime_enabled = false;
+                        self.collect_text(TextEvent::Commit(text));
+                    }
+                    Ime::Preedit(text, selection) => {
+                        self.ime_enabled = !text.is_empty();
+                        self.collect_text(TextEvent::Preedit { text, selection });
+                    }
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 if let Err(error) = self.collect_cursor(position) {
                     self.stop(event_loop, DesktopRunError::Pointer(error));
@@ -1374,6 +1643,7 @@ impl<A: Action> ApplicationHandler for DesktopHost<A> {
             WindowEvent::CursorLeft { .. } => self.collect_pointer_left(),
             WindowEvent::Focused(false) => self.collect_focus_loss(),
             WindowEvent::Focused(true) => {
+                self.text_focused = true;
                 self.capture.set_focused(true);
                 self.surface_waiting = false;
             }
@@ -1544,6 +1814,7 @@ const fn extent_is_occluded(width: u32, height: u32) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputBufferFailure {
+    Text(crate::input::TextInputError),
     Limit,
     Allocation,
     RelativeMotion(RelativePointerMotionError),

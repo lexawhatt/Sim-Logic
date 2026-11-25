@@ -52,9 +52,10 @@ pub mod events;
 #[cfg(feature = "fonts")]
 pub mod fonts {
     pub use sim_engine::{
-        FontBudget, FontBudgetResource, FontError, FontFace, LogicalPixels, PhysicalPerLogical,
-        RasterizedGlyph, ShapedGlyph, ShapedLine, ShapedLineError, TextDirection, TextLayoutBudget,
-        TextShapingSession, TextStyle,
+        FontBudget, FontBudgetResource, FontError, FontFace, LigatureCaretPolicy, LogicalPixels,
+        PhysicalPerLogical, RasterizedGlyph, ShapedCaret, ShapedCluster, ShapedClusters,
+        ShapedGeometryError, ShapedGlyph, ShapedLine, ShapedLineError, ShapedSelection,
+        TextDirection, TextLayoutBudget, TextPenPosition, TextShapingSession, TextStyle,
     };
 }
 #[path = "rendering/extraction.rs"]
@@ -115,7 +116,7 @@ pub use extraction::{
 pub use sim_engine::{
     Layer, SceneBudget, SceneBudgetResource, SceneError, Stroke, StrokeCap2d, StrokeDashPattern2d,
     StrokeJoin2d, StrokeMarker2d, StrokeMarkerAnchor2d, StrokeStyle2d, StrokeStyleError,
-    StrokeWidthMode2d,
+    StrokeWidthMode2d, SurfaceEffects3d, SurfaceEffectsError3d,
 };
 
 /// Convenience result for application code and fallible Systems that combine
@@ -174,11 +175,12 @@ pub mod prelude {
         LogicEntity, LogicEntityRef, TransitionIntentToken, WorldFactoryId, WorldGeneration,
     };
     pub use crate::input::{
-        Action, ActionEdge, ButtonState, DigitalAxis2d, DuplicateMouseBinding, FixedInput,
-        FrameInput, FrameInputEvent, InputCancellationReason, InputCollectionError, InputControl,
-        InputEvent, MouseButton, PhysicalKeyCode, PointerCapture, PointerCaptureStatus,
-        PointerSample, PointerSampleError, PointerScrollEvent, RelativePointerMotion,
-        RelativePointerMotionError, ScrollDelta, ScrollDeltaError, ScrollUnit,
+        Action, ActionEdge, ButtonState, DigitalAxis2d, DuplicateMouseBinding, EditCommand,
+        FixedInput, FrameInput, FrameInputEvent, FrameText, InputCancellationReason,
+        InputCollectionError, InputControl, InputEvent, ModalKeyboard, MouseButton,
+        PhysicalKeyCode, PointerCapture, PointerCaptureStatus, PointerSample, PointerSampleError,
+        PointerScrollEvent, RelativePointerMotion, RelativePointerMotionError, RoutedKey,
+        ScrollDelta, ScrollDeltaError, ScrollUnit, TextEvent, TextInputError,
     };
     pub use crate::motion::{
         CameraFollowTarget2d, CameraFollowTarget2dError, DigitalMovement2d, DigitalMovement2dError,
@@ -202,10 +204,13 @@ pub mod prelude {
         TextMetrics, TextPreparationSession, TextRunLimits, TextSettings,
     };
     pub use crate::three_d::{
-        CuboidVisual3d, CuboidVisualError, MeshAsset3d, MeshVisual3d, MeshVisualError,
-        ResolvedCuboid3d, ResolvedMesh3d, TextureAsset3d, TextureVisual3d, TextureVisualError,
-        ThreeDExtractionError, ThreeDLimitResource, ThreeDRenderLimits, ThreeDSnapshot,
-        ThreeDSurfacePolicy, View3d, View3dError,
+        CuboidVisual3d, CuboidVisualError, LayerResolution3d, LayerResolutionFallback3d,
+        LayerSettings3d, LayeredDimensions3d, LayeredFailurePolicy3d, LayeredPresentationFeedback,
+        LayeredPresentationRejection, LayeredRejection3d, LayeredRenderLimits3d, LayeredView3d,
+        MeshAsset3d, MeshVisual3d, MeshVisualError, RenderLayer3d, ResolvedCuboid3d,
+        ResolvedMesh3d, TextureAsset3d, TextureVisual3d, TextureVisualError, ThreeDExtractionError,
+        ThreeDLimitResource, ThreeDRenderLimits, ThreeDSnapshot, ThreeDSurfacePolicy, View3d,
+        View3dError,
     };
     pub use crate::time::{DroppedFixedTime, FixedFramePlan, FixedTime, FrameTime, TimeConfig};
     pub use crate::transition::WorldReplacementOnPress;
@@ -234,4 +239,5 @@ pub mod prelude {
         StrokeDashPattern2d, StrokeJoin2d, StrokeMarker2d, StrokeMarkerAnchor2d, StrokeStyle2d,
         StrokeStyleError, StrokeWidthMode2d,
     };
+    pub use crate::{SurfaceEffects3d, SurfaceEffectsError3d};
 }

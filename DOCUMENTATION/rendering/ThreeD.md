@@ -5,7 +5,7 @@
 `CuboidVisual3d` draws a solid box through Sim;Engine's retained mesh and
 hardware depth-buffer path. A `View3d` World resource supplies its camera and
 background. This is real geometric 3D, not projected screen rectangles.
-The bridge pins the official Engine `0.4.2` release from crates.io.
+The development checkout uses the local sibling Engine `0.5.0-dev.1`.
 Cuboids keep their simple opaque/outline API.
 Host-built meshes support vertex colors, UVs, normals, Opaque/Mask/Blend
 materials, textures and explicit lighting/fog. Mesh import, normal generation,
@@ -467,3 +467,116 @@ cover budget arithmetic, source refresh, scene-wide errors, and target-cache
 invalidation policy without a GPU. These tests do not establish rendered
 clipping output or a performance improvement. Native/GPU integration results
 must be measured independently on the exact pinned candidate.
+
+## Two-resolution rendering in the standard desktop host
+
+`View3d::set_layered(Some(settings))` enables the Engine layered path through
+`Application::run_desktop`. The application keeps ordinary Logic input, World
+lifecycle, images, text and screen UI. No application-owned window or GPU host
+is needed. See the runnable [layered_view example](../../examples/layered_view/main.rs):
+
+```sh
+cargo run --features text --example layered_view
+```
+
+Assign `RenderLayer3d::Base` or `Detail` to each `CuboidVisual3d` or
+`MeshVisual3d` with `set_render_layer`. The default is Base. Assignment belongs
+to the instance, so shared mesh assets can appear in either layer. Hidden and
+disabled objects follow ordinary extraction rules. Setting the view back to
+`None` restores ordinary rendering, which ignores layer assignments.
+
+```rust
+use sim_logic::prelude::*;
+use std::num::NonZeroU32;
+
+# fn configure(config: &mut AppConfig, view: &mut View3d) -> LogicResult {
+let base = LayerSettings3d::new(LayerResolution3d::DivideSurface(
+    NonZeroU32::new(2).ok_or("nonzero divisor required")?,
+))
+.with_surface_policy(ThreeDSurfacePolicy::Native)
+.with_effects(SurfaceEffects3d::new().with_quantization(8)?.with_dither(128));
+let detail = LayerSettings3d::default()
+    .with_surface_policy(ThreeDSurfacePolicy::Native);
+view.set_layered(Some(LayeredView3d::new(base, detail)
+    .with_resolution_fallback(LayerResolutionFallback3d::FullSurface)));
+config.set_three_d_render_limits(
+    ThreeDRenderLimits::new(2, 24, 2048 * 2048).with_layered_limits(
+        LayeredRenderLimits3d::new(24, 24, 72, 128 * 1024 * 1024, 256 * 1024 * 1024),
+    ),
+);
+# Ok(())
+# }
+```
+
+The last five limits are Base triangles, Detail triangles, total triangle
+submissions, final attachment bytes and replacement peak bytes. All default to
+zero. Base is submitted **twice**: low-resolution shading and visibility/shading
+at Detail resolution. Detail is submitted once, followed by one depth-composition
+draw. Engine owns four color/depth target pairs: low Base, Base visibility,
+Detail and final output. These limits include Engine-generated clipped triangles;
+existing source, texture, target-pixel and finite Engine scene budgets also apply.
+`FrameLimits` independently budgets the final color target and screen composition.
+Driver metadata and in-flight retirement are not included in nominal attachment bytes.
+
+Both layers use the same camera. Nearest depth wins; ties select Base. Detail is
+not an always-on-top overlay. Detail resolution also determines final 3D output
+and visibility resolution. `FullSurface` means native physical window pixels;
+`DivideSurface(n)` requires both axes to divide exactly; `FixedPhysical(w, h)`
+requires the current logical viewport aspect. Base must fit inside Detail, and
+neither may exceed the surface. Incompatible requests reject by default. Explicit
+`FullSurface` fallback changes both layer sizes, preserves effects and still
+checks every budget. It does not change UI/pointer coordinates. Zero-size windows
+defer presentation through the ordinary host lifecycle.
+
+Each layer has independent `SurfaceEffects3d` and `ThreeDSurfacePolicy`. Effects
+default to identity and policies to `StrictPortable`. Layer policies override
+`View3d::surface_policy` only while layered rendering is enabled. Affine UVs and
+vertex snapping require explicit `Native`. Layered surfaces must be Opaque or
+Mask; Blend and cuboid wireframes produce a typed rejection. Screen text and
+other UI remain separate and can use ordinary alpha composition. Fog settings
+come from the shared view; mesh `SurfaceStyle3d::with_fog` and cuboid
+`set_fog_enabled` choose participation per material.
+
+Compatible attachments are reused. Size, DPI or device changes cause Engine's
+transactional replacement, charging previous plus new attachment bytes. Effect
+edits redraw without replacement. Restoration retains old attachment accounting
+until replacement succeeds; old pixels never qualify as a current frame.
+Moving between layers prunes both retained partitions before adding migrated
+instances. World changes invalidate scene provenance. No-3D views release the
+3D cache. These operations preserve the standard input and UI lifecycle.
+
+Failure policy defaults to `Stop`. To keep current 2D/UI responsive on expected
+layered rejection, register `LayeredPresentationFeedback::default()` as an
+Application Resource, then select `LayeredFailurePolicy3d::ContinueUi`.
+Initial configuration without that receiver fails before opening the window;
+later configuration changes are checked before submission. Systems read feedback
+through `AppRes<LayeredPresentationFeedback>`. Rejection is latched until a complete
+layered frame is actually presented. The rejected 3D contribution is omitted;
+previous World/DPI/device pixels are never substituted. Repeated unchanged target
+budget rejections reuse the recorded decision without another allocation attempt.
+
+This recovery policy applies after successful complete extraction, to typed
+resolution/material/effects, Logic 3D allowance and explicit Engine surface-triangle
+budget rejections. System/extraction errors, numerical geometry errors, ambiguous
+Engine capacity/device failures and resource failures retain the host's fatal
+behavior. UI composition enforces its own independent policy and limits.
+
+Headless code can inspect `ThreeDSnapshot::layer_cuboids`, `layer_meshes` and
+`view().layered()`, and call `validate_layered(limits)` for CPU admission or
+`LayeredView3d::resolve` for physical-size planning. Extraction remains complete
+and does not fabricate desktop feedback; headless tests explicitly invoke admission.
+
+`DesktopRunReport::last_layered_frame` records requested/effective dimensions,
+fallback use, target action/current/peak bytes, exact frame/World/device/configuration
+origin, three Engine scene reports and CPU preparation/submission time. Lifecycle
+totals and typed rejection are separate report fields. GPU samples correlate exact
+Engine source/ID with BaseLow, BaseVisibility, Detail or WindowComposition roles,
+World and device generation. Engine exposes no timestamp for its final depth
+compositor: its GPU time is unavailable. Delayed readbacks may be absent; neither
+CPU times nor missing samples should be presented as GPU frame time or a speedup.
+
+The Linux Vulkan verification uses full offscreen composition readback plus a
+separate native standard-host input/presentation run. Device replacement, DPI and
+budget failure are checked in a dedicated ignored GPU test. Native IME can also
+be exercised over layered rendering with `text_entry --layered`. These checks
+are not a consumer workload benchmark or Windows/Wayland qualification.

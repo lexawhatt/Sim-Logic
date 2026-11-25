@@ -1,4 +1,4 @@
-//! One retained cube mesh, bounded scene slots, and one reusable depth target.
+//! Retained scene ownership and ordinary/layered desktop presentation.
 
 use std::{error::Error, fmt, mem::size_of};
 
@@ -21,8 +21,13 @@ use crate::{
 #[path = "three_d/meshes.rs"]
 mod meshes;
 use meshes::CustomMeshes;
+#[path = "three_d/layered.rs"]
+mod layered;
 #[path = "three_d/textures.rs"]
 mod textures;
+pub use layered::{
+    DesktopLayeredFrame, DesktopLayeredProvenance, DesktopLayeredStatistics, LayeredTargetAction,
+};
 
 /// A bounded 3D preparation or separate depth-prepass failure.
 ///
@@ -33,6 +38,21 @@ mod textures;
 /// remain scene-wide rather than being attributed to an arbitrary cuboid.
 #[derive(Debug)]
 pub enum DesktopThreeDError {
+    /// Engine rejected a specific layered instance, preserving managed attribution.
+    LayeredObject {
+        /// Assigned partition containing this source.
+        layer: crate::three_d::RenderLayer3d,
+        /// Current source entity including World generation.
+        source: LogicEntity,
+        /// Original Engine object/triangle diagnostic.
+        error: Mesh3dRenderError,
+    },
+    /// Expected layered presentation rejection; ContinueUi may omit this contribution.
+    LayeredRejected(crate::three_d::LayeredRejection3d),
+    /// Engine layered resource/device/rendering failure, never silently skipped.
+    Layered(sim_engine::LayeredRenderError3d),
+    /// ContinueUi was requested without its required application feedback resource.
+    MissingLayeredFeedback,
     /// An independent 3D allowance was exceeded before preparing GPU resources.
     LimitExceeded {
         /// Resource exceeding its frozen cap.
@@ -121,6 +141,19 @@ pub enum DesktopThreeDError {
 impl fmt::Display for DesktopThreeDError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::LayeredObject {
+                layer,
+                source,
+                error,
+            } => write!(
+                formatter,
+                "layered {layer:?} object {source:?} failed: {error}"
+            ),
+            Self::LayeredRejected(error) => write!(formatter, "{error}"),
+            Self::Layered(error) => write!(formatter, "layered 3D failed: {error}"),
+            Self::MissingLayeredFeedback => formatter.write_str(
+                "ContinueUi requires LayeredPresentationFeedback as an application resource",
+            ),
             Self::LimitExceeded {
                 resource,
                 requested,
@@ -173,6 +206,9 @@ impl fmt::Display for DesktopThreeDError {
 impl Error for DesktopThreeDError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::LayeredObject { error, .. } => Some(error),
+            Self::LayeredRejected(error) => Some(error),
+            Self::Layered(error) => Some(error),
             Self::Viewport(error) => Some(error),
             Self::View(error) => Some(error),
             Self::Mesh(error) => Some(error),
@@ -239,21 +275,150 @@ impl DesktopThreeDUpdates {
 }
 
 pub(super) struct DesktopThreeD {
+    ordinary: RetainedScene,
+    target: TargetCache<RenderTarget3d>,
+    layered: layered::LayeredDesktop,
+    layered_active: bool,
+    generation: Option<crate::identity::WorldGeneration>,
+}
+
+impl DesktopThreeD {
+    pub(super) const fn new() -> Self {
+        Self {
+            ordinary: RetainedScene::new(),
+            target: TargetCache::new(),
+            layered: layered::LayeredDesktop::new(),
+            layered_active: false,
+            generation: None,
+        }
+    }
+    pub(super) fn clear(&mut self) {
+        self.ordinary.clear();
+        self.target.clear();
+        self.layered.clear();
+        self.layered_active = false;
+    }
+    pub(super) fn begin_world(
+        &mut self,
+        renderer: &mut WgpuRenderer,
+        generation: crate::identity::WorldGeneration,
+    ) {
+        if self.generation != Some(generation) {
+            renderer.clear_frame_cache();
+            self.clear();
+            self.generation = Some(generation);
+        }
+    }
+    pub(super) fn color_target(&self) -> Option<&RenderTarget2d> {
+        if self.layered_active {
+            self.layered.color_target()
+        } else {
+            self.target.get().map(RenderTarget3d::color_target)
+        }
+    }
+    pub(super) fn has_layered_scenes(&self) -> bool {
+        self.layered
+            .scenes
+            .iter()
+            .any(|scene| scene.scene.is_some())
+    }
+
+    pub(super) fn updates(&self) -> DesktopThreeDUpdates {
+        if self.layered_active {
+            self.layered.updates()
+        } else {
+            self.ordinary.custom.updates
+        }
+    }
+    pub(super) fn restore(&mut self, renderer: &WgpuRenderer) -> Result<(), DesktopThreeDError> {
+        self.target.clear();
+        self.layered.invalidate();
+        self.ordinary.restore(renderer)?;
+        self.layered.restore(renderer)
+    }
+    fn switch_mode(&mut self, renderer: &mut WgpuRenderer, layered: bool) {
+        if self.layered_active != layered {
+            renderer.clear_frame_cache();
+            self.clear();
+            self.layered_active = layered;
+        }
+    }
+    pub(super) fn prepare_layered(
+        &mut self,
+        renderer: &mut WgpuRenderer,
+        snapshot: ThreeDSnapshot<'_>,
+        limits: ThreeDRenderLimits,
+        provenance: DesktopLayeredProvenance,
+    ) -> Result<DesktopLayeredFrame, DesktopThreeDError> {
+        self.switch_mode(renderer, true);
+        self.layered.prepare(renderer, snapshot, limits, provenance)
+    }
+    pub(super) fn prepare(
+        &mut self,
+        renderer: &mut WgpuRenderer,
+        snapshot: ThreeDSnapshot<'_>,
+        limits: ThreeDRenderLimits,
+    ) -> Result<Mesh3dRenderReport, DesktopThreeDError> {
+        self.switch_mode(renderer, false);
+        let (width, height) = renderer.size();
+        check_limits(snapshot.cuboids().len(), width, height, limits)?;
+        let render_budget = snapshot_render_budget(snapshot, limits);
+        let viewport = renderer
+            .logical_viewport()
+            .map_err(DesktopThreeDError::Viewport)?;
+        let camera = snapshot
+            .view()
+            .camera(viewport)
+            .map_err(DesktopThreeDError::View)?;
+        self.ordinary.prepare_scene(renderer, snapshot, limits)?;
+        let descriptor = TargetDescriptor {
+            width,
+            height,
+            viewport,
+        };
+        if !self.target.matches(descriptor) {
+            renderer.clear_frame_cache();
+        }
+        self.target.ensure(descriptor, || {
+            renderer
+                .create_render_target3d(width, height, viewport)
+                .map_err(DesktopThreeDError::Resource)
+        })?;
+        let target = self.target.get().ok_or(DesktopThreeDError::InvalidCache)?;
+        let scene = self
+            .ordinary
+            .scene
+            .as_ref()
+            .ok_or(DesktopThreeDError::InvalidCache)?;
+        renderer
+            .render_scene3d_to_target_with_budget(target, scene, camera, render_budget)
+            .map_err(|error| {
+                if let Some(source) = error
+                    .object_id()
+                    .and_then(|id| find_object_source(id, self.ordinary.custom.object_sources()))
+                {
+                    DesktopThreeDError::ObjectRender { source, error }
+                } else {
+                    map_render_error(error, &self.ordinary.slots)
+                }
+            })
+    }
+}
+
+pub(super) struct RetainedScene {
     mesh: Option<RetainedMesh3d>,
     scene: Option<Scene3d>,
     slots: Vec<SceneSlot>,
     custom: CustomMeshes,
-    target: TargetCache<RenderTarget3d>,
 }
 
-impl DesktopThreeD {
+impl RetainedScene {
     pub(super) const fn new() -> Self {
         Self {
             mesh: None,
             scene: None,
             slots: Vec::new(),
             custom: CustomMeshes::new(),
-            target: TargetCache::new(),
         }
     }
 
@@ -263,15 +428,6 @@ impl DesktopThreeD {
         self.scene = None;
         self.slots.clear();
         self.custom.clear();
-        self.target.clear();
-    }
-
-    pub(super) fn color_target(&self) -> Option<&RenderTarget2d> {
-        self.target.get().map(RenderTarget3d::color_target)
-    }
-
-    pub(super) fn updates(&self) -> DesktopThreeDUpdates {
-        self.custom.updates
     }
 
     /// Restore the scene as a unit: Engine preserves IDs, aliases and material
@@ -301,26 +457,15 @@ impl DesktopThreeD {
                     .map_err(DesktopThreeDError::Resource)?,
             );
         }
-        self.target.clear();
         Ok(())
     }
 
-    pub(super) fn prepare(
+    fn prepare_scene(
         &mut self,
         renderer: &mut WgpuRenderer,
         snapshot: ThreeDSnapshot<'_>,
         limits: ThreeDRenderLimits,
-    ) -> Result<Mesh3dRenderReport, DesktopThreeDError> {
-        let (width, height) = renderer.size();
-        check_limits(snapshot.cuboids().len(), width, height, limits)?;
-        let render_budget = snapshot_render_budget(snapshot, limits);
-        let viewport = renderer
-            .logical_viewport()
-            .map_err(DesktopThreeDError::Viewport)?;
-        let camera = snapshot
-            .view()
-            .camera(viewport)
-            .map_err(DesktopThreeDError::View)?;
+    ) -> Result<(), DesktopThreeDError> {
         if self.mesh.is_none() {
             let mesh = unit_cube()?;
             self.mesh = Some(
@@ -396,35 +541,19 @@ impl DesktopThreeD {
         }
         self.custom
             .prepare(renderer, scene, snapshot.meshes(), limits)?;
-        let descriptor = TargetDescriptor {
-            width,
-            height,
-            viewport,
-        };
-        if !self.target.matches(descriptor) {
-            // Engine 0.3 composition caches bindings that retain this target's
-            // texture. Release those host references before replacing it, not
-            // only our target handle. Steady-state frames keep their cache.
-            renderer.clear_frame_cache();
+        Ok(())
+    }
+
+    fn prune(&mut self, snapshot: ThreeDSnapshot<'_>) -> Result<(), DesktopThreeDError> {
+        if let Some(scene) = &mut self.scene {
+            while self.slots.len() > snapshot.cuboids().len() {
+                let slot = self.slots.last().ok_or(DesktopThreeDError::InvalidCache)?;
+                scene.remove(slot.id).map_err(DesktopThreeDError::Scene)?;
+                self.slots.pop();
+            }
+            self.custom.prune(scene, snapshot.meshes())?;
         }
-        self.target.ensure(descriptor, || {
-            renderer
-                .create_render_target3d(width, height, viewport)
-                .map_err(DesktopThreeDError::Resource)
-        })?;
-        let target = self.target.get().ok_or(DesktopThreeDError::InvalidCache)?;
-        renderer
-            .render_scene3d_to_target_with_budget(target, scene, camera, render_budget)
-            .map_err(|error| {
-                if let Some(source) = error
-                    .object_id()
-                    .and_then(|id| find_object_source(id, self.custom.object_sources()))
-                {
-                    DesktopThreeDError::ObjectRender { source, error }
-                } else {
-                    map_render_error(error, &self.slots)
-                }
-            })
+        Ok(())
     }
 }
 
@@ -664,7 +793,13 @@ fn check_limits(
 }
 
 pub(super) fn color_target_bytes(renderer: &WgpuRenderer) -> Result<usize, DesktopThreeDError> {
-    let (width, height) = renderer.size();
+    color_target_bytes_at(renderer, renderer.size())
+}
+
+pub(super) fn color_target_bytes_at(
+    renderer: &WgpuRenderer,
+    (width, height): (u32, u32),
+) -> Result<usize, DesktopThreeDError> {
     let bytes_per_texel = renderer
         .surface_format()
         .block_copy_size(None)
@@ -953,12 +1088,12 @@ mod tests {
     #[test]
     fn cache_invalidation_discards_all_renderer_bound_resources() {
         let mut cache = DesktopThreeD::new();
-        assert_eq!(cache.slots.capacity(), 0);
+        assert_eq!(cache.ordinary.slots.capacity(), 0);
         cache.clear();
-        assert!(cache.mesh.is_none());
-        assert!(cache.scene.is_none());
+        assert!(cache.ordinary.mesh.is_none());
+        assert!(cache.ordinary.scene.is_none());
         assert!(cache.target.get().is_none());
-        assert!(cache.slots.is_empty());
+        assert!(cache.ordinary.slots.is_empty());
     }
 
     #[test]
