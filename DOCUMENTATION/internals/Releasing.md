@@ -2,9 +2,44 @@
 
 [Documentation](../README.md) / Internals
 
-The current version is **0.1.0**, using registry **sim-engine = 0.4.2**.
-Publication is a separate, deliberate step. None of the checks below uploads
-the crate, creates a tag or rewrites Git history.
+The current development version is **0.2.0-dev.1**, using local
+**sim-engine = 0.5.0-dev.1**. The target final versions are **Logic 0.2.0** and
+**Engine 0.5.0**. Neither the development version string nor a successful local
+build establishes registry publication. Publication remains a separate approved
+step; qualification commands below do not upload or tag a release.
+
+## Engine and consumer release gates
+
+The Engine handoff reports the layered-rendering and exact text-cluster geometry
+APIs implemented and checked. Its last text-contract review and full release run
+on the final Engine commit remain pending, followed by Engine publication.
+There is no confirmed Engine defect in the desktop integration request.
+
+Logic's standard desktop layered bridge is already implemented: assignment,
+resolution/effects, target lifecycle, input/UI preservation and diagnostics.
+Chaos;Chess acceptance must exercise that bridge; consumer acceptance is still
+open. Local Logic/Engine checkouts are the supported development route meanwhile.
+Consumers pinned to `=0.1.0` must explicitly adopt `=0.2.0-dev.1` and refresh
+their lockfiles. This preparation does not edit consumer manifests.
+
+After Engine 0.5.0 is published:
+
+1. Replace Logic's Engine dependency with `version = "=0.5.0"` and remove `path`.
+   Resolve and inspect the lockfile against the registry artifact. Check direct
+   consumer Engine dependencies for the same type/source identity.
+2. Set Logic to 0.2.0 when its final scope and acceptance are complete; update
+   the changelog and installation examples. Keep unimplemented mutable screen
+   textures and live diagnostic history outside the advertised release scope.
+3. Run the full local gate, MSRV and applicable native/consumer acceptance on
+   the final candidate. Recheck the registry-backed package and clean-commit
+   `cargo publish --dry-run --locked --all-features`.
+4. Publish/tag only after explicit release approval. Re-run affected checks if
+   the final dependency artifact or source changes after qualification.
+
+While Engine is local and unpublished, package/archive and publish dry-run gates
+remain open. `scripts/check-release.sh` includes registry-backed packaging and
+is not expected to qualify this development dependency graph end to end. Use
+individual source checks for development and report their limited scope.
 
 ## Package and documentation
 
@@ -67,6 +102,8 @@ cargo test --locked --all-features --test engine_dev4_gpu -- \
   --ignored --nocapture --test-threads=1
 cargo test --locked --all-features --lib managed_mesh_texture_revisions_and_recovery -- \
   --ignored --nocapture --test-threads=1
+cargo test --locked --all-features --lib layered_bridge_capture_resize_and_recovery -- \
+  --ignored --nocapture --test-threads=1
 cargo test --locked --all-features --lib retained_screen_gpu_resources -- \
   --ignored --nocapture --test-threads=1
 cargo test --locked --all-features --lib retained_glyph_batch_gpu_resources -- \
@@ -88,7 +125,7 @@ not currently a Sim;Logic release-qualified platform.
 ```bash
 git status --short
 cargo package --list --locked
-cargo publish --dry-run --locked
+cargo publish --dry-run --locked --all-features
 ```
 
 Use a clean, committed tree for this final check. Review unexpected files and
@@ -96,7 +133,7 @@ warnings. `--dry-run` validates packaging without uploading; the local check
 script uses `cargo package --allow-dirty` only so an in-progress edit can be
 tested before committing. That result is not final clean-source qualification.
 
-After explicit release approval, use `cargo publish --locked`, confirm registry
+After explicit release approval, use `cargo publish --locked --all-features`, confirm registry
 and docs.rs results, then create/push the version tag on that tested commit.
 A crates.io version cannot be overwritten: fix a bad release with a new version,
 not by rewriting a published commit. See the official

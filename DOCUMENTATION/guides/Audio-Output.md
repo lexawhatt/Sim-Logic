@@ -7,11 +7,13 @@ mono PCM source. PCM here means a sequence of amplitude samples, not an encoded
 audio file. Rodio 0.22.2 supplies device output and channel/sample conversion;
 only its playback feature is enabled by this dependency.
 
-Enable audio independently of the desktop renderer:
+Enable audio independently of the desktop renderer. For the current local
+development version, use the adjacent checkouts described in the
+[installation guide](../../README.md#install) and adjust the path:
 
 ```toml
 [dependencies]
-sim-logic = { version = "0.1.0", default-features = false, features = ["audio"] }
+sim-logic = { path = "../Sim-Logic", version = "=0.2.0-dev.1", default-features = false, features = ["audio"] }
 ```
 
 Keep the default features enabled as well when using the desktop application

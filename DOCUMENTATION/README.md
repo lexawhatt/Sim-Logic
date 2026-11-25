@@ -4,7 +4,7 @@ Sim;Logic supplies the application loop, objects, input and update order.
 Sim;Engine draws the result. Your application owns its game rules, scientific
 models or other domain logic; rendered state is not the model itself.
 
-These guides describe the 0.1 API. It is pre-1.0: future minor releases may
+These guides describe the 0.2 development API. It is pre-1.0: future minor releases may
 contain documented breaking changes.
 
 ## Start here
@@ -68,8 +68,9 @@ an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
 pointer buttons have no global routing focus (OS capture is a separate explicit service), audio is not a World-owned voice service,
 and 3D accepts host-built textured meshes but supplies no model-file importer.
-The current Engine dependency is the official `0.4.2` release from crates.io,
-pinned exactly. The guides distinguish supported paths from remaining test gaps.
+Logic `0.2.0-dev.1` currently depends on the adjacent local Engine
+`0.5.0-dev.1` checkout, pinned exactly. The final targets are Logic `0.2.0`
+and registry Engine `0.5.0`; publication and final qualification remain pending. The guides distinguish supported paths from remaining test gaps.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been
 checked on Linux/Vulkan, not every platform. The [repository README](../README.md)

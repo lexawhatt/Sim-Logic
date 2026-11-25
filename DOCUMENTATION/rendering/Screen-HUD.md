@@ -407,7 +407,7 @@ centered annulus. `fill_color()` returns `None`; `set_color` enables a fill.
 Removing the only outline with `set_stroke(None)` is rejected until a fill is
 enabled. Existing filled-circle constructors keep their behavior.
 
-Closed arbitrary paths remain unsupported in Engine 0.4.2. Repeating the first
+Closed arbitrary paths remain unsupported by this Logic API. Repeating the first
 point at the end would produce two endpoint caps, not a joined seam, so Logic
 rejects that spelling with `ClosedPathUnsupported`. Use the circle/rectangle
 outline APIs for those shapes. This is not a polygon fill or closed-path API.

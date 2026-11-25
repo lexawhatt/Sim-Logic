@@ -3,7 +3,23 @@
 User-visible changes to Sim;Logic. This project is pre-1.0; minor releases may
 contain documented breaking changes.
 
-## Unreleased
+## 0.2.0-dev.1 - development, not published
+
+Target final version: 0.2.0, following the published Engine 0.5.0 dependency
+and final release checks. Consumer acceptance through the stock desktop bridge
+remains separate and is not claimed complete.
+
+### Migration from 0.1
+
+- Update consumer version requirements explicitly to `=0.2.0-dev.1` when using
+  this local development checkout; an `=0.1.0` requirement will not match it.
+- Account for the new `InputEvent::Text` marker in exhaustive matches and use
+  ordered semantic text events for character input. `BeginFrameRejection::Text`
+  and new public desktop error variants also affect exhaustive matches.
+- Use the same Engine 0.5.0-dev.1 source identity across direct and Logic-mediated
+  Engine dependencies. Engine 0.4 types are not interchangeable with 0.5 types.
+
+### Added and changed
 
 - Add opt-in Base/Detail rendering in the standard desktop host, per-layer
   resolution/effects, cuboid fog participation, transactional targets and recovery.
