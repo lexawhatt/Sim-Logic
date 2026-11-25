@@ -17,9 +17,23 @@ its lockfile records the registry source and checksum.
 
 Logic's standard desktop layered bridge is already implemented: assignment,
 resolution/effects, target lifecycle, input/UI preservation and diagnostics.
-Chaos;Chess acceptance must exercise that bridge; consumer acceptance is still
-open and owned by the consumer. Use a local Logic checkout with registry Engine
-for development. Consumers pinned to `=0.1.0` must explicitly adopt
+Chaos;Chess reported existing-game compatibility on November 25 against Logic
+`af98d65` (0.2.0-dev.1) and local Engine `33e0277` (0.5.0): all-target checks,
+strict Clippy, 39 tests and a native smoke run passed. The smoke drew 119 frames,
+skipped one and reported zero budget rejections. The game still CPU-rasterizes
+a full-frame texture; it does not exercise the layered bridge. Its Engine path
+patch also means this run did not qualify the published registry artifact.
+
+Layered consumer acceptance remains open and owned by the consumer: Base/Detail
+occlusion and fog, picking/book composition, resize/recovery, and live UI after
+3D rejection need a migrated game scene. New semantic text/IME in the notebook,
+consumer MSRV and the final Logic 0.2.0 commit remain unverified by that report.
+Logic's own registry/package checks and earlier native bridge checks are separate
+evidence; they do not establish game acceptance. The report therefore closes the
+existing-game compatibility check, not the complete consumer release gate.
+
+Use a local Logic checkout with registry Engine for development.
+Consumers pinned to `=0.1.0` must explicitly adopt
 `=0.2.0-dev.1` and refresh their lockfiles. Direct Engine dependencies must use
 the same registry source/version as Logic to preserve type identity.
 
