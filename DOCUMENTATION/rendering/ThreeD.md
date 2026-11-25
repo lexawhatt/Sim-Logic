@@ -580,3 +580,46 @@ separate native standard-host input/presentation run. Device replacement, DPI an
 budget failure are checked in a dedicated ignored GPU test. Native IME can also
 be exercised over layered rendering with `text_entry --layered`. These checks
 are not a consumer workload benchmark or Windows/Wayland qualification.
+
+### Comparing a CPU-rendered consumer with the layered host
+
+Migrate geometry and its interaction policy together. A CPU renderer may also
+own the hit map used by picking; removing rasterization must not silently remove
+that behavior. The bridge does not provide GPU object-ID picking. Use the same
+camera, model transforms and logical viewport for application-owned picking and
+rendering, and test occlusion and animated poses under the selected policy.
+
+Plan dynamic overlays explicitly. `ScreenImageVisual` uses immutable images
+registered before startup; it has no mutable pixel-revision API. Managed screen
+text/primitives can change, and `TextureAsset3d::with_region_update` updates
+textures on 3D meshes, but neither makes an arbitrary CPU image a mutable screen
+overlay. Retaining an animated CPU overlay requires a supported composition
+strategy or a separately defined bounded screen-texture API.
+
+Keep baseline and candidate workload, surface, device, build profile and quality
+comparable. Record requested and effective layer sizes: resolution fallback is a
+quality change. Fixed virtual-canvas aspect may differ from the current window;
+`FixedPhysical` does not authorize stretching. Preserve explicit source hashes
+and separate cold startup, warmup and measured samples. Avoid overlapping paired
+performance runs with builds or other tests.
+
+A headless CPU baseline excludes the desktop renderer. After moving work to the
+GPU, reduced headless time measures only the CPU work that remains. Measure the
+complete native path separately, including resource preparation, submissions,
+waiting and confirmed presentation. CPU and GPU intervals can overlap; adding
+them does not produce frame latency.
+
+`DesktopConfig::set_gpu_timing(true)` requests supported pass timestamps. After
+`run_desktop` returns, `DesktopRunReport` exposes counters, last reports and the
+latest bounded correlated GPU batch. It does **not** retain a full sample history
+or expose a live application sampling callback. Whole-run p50/p95/p99 GPU timing
+therefore requires a separately defined collection path; it cannot be computed
+from that final batch. The layered depth-compositor timestamp remains unavailable.
+
+A consumer report should identify source/binary hashes, workload and camera,
+physical/logical sizes and DPI, adapter/driver/backend, format/MSAA/present mode,
+requested/effective quality, warmup and sample counts, raw observed timings,
+triangle/draw/upload counts, target current/peak bytes, and all skipped, rejected,
+fallback and recovered frames. Give functional, visual, performance and platform
+acceptance separate results. A successful launch verifies none of the unmeasured
+percentiles or platforms.
