@@ -49,8 +49,8 @@ Run any of them with `cargo run --release --example <name>`.
 ## A complete headless program
 
 For a separate Cargo project using the current 0.2.0-dev.1 checkout, add this
-local dependency (adjust the path). Sim-Engine 0.5.0-dev.1 must be adjacent to
-Sim-Logic. This version is not available from the registry yet:
+local Logic dependency (adjust the path). Cargo downloads Engine 0.5.0 from
+crates.io. Logic 0.2.0-dev.1 is not available from the registry yet:
 
 ```toml
 [dependencies]

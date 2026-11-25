@@ -5,8 +5,8 @@ contain documented breaking changes.
 
 ## 0.2.0-dev.1 - development, not published
 
-Target final version: 0.2.0, following the published Engine 0.5.0 dependency
-and final release checks. Consumer acceptance through the stock desktop bridge
+Target final version: 0.2.0, after final Logic release checks.
+Engine 0.5.0 is now a published registry dependency. Consumer acceptance through the stock desktop bridge
 remains separate and is not claimed complete.
 
 ### Migration from 0.1
@@ -16,7 +16,7 @@ remains separate and is not claimed complete.
 - Account for the new `InputEvent::Text` marker in exhaustive matches and use
   ordered semantic text events for character input. `BeginFrameRejection::Text`
   and new public desktop error variants also affect exhaustive matches.
-- Use the same Engine 0.5.0-dev.1 source identity across direct and Logic-mediated
+- Use the same registry Engine 0.5.0 source identity across direct and Logic-mediated
   Engine dependencies. Engine 0.4 types are not interchangeable with 0.5 types.
 
 ### Added and changed
@@ -26,8 +26,8 @@ remains separate and is not claimed complete.
   Frozen pass/attachment limits, typed ContinueUi feedback, frame provenance and
   per-role GPU diagnostics preserve the existing input and screen composition path.
 
-- Integrate the local sibling Sim;Engine 0.5.0-dev.1 working tree. The path
-  dependency is intentional for development; registry publication remains separate.
+- Integrate published Sim;Engine 0.5.0 with an exact registry dependency.
+  The earlier development path dependency is removed; no Engine checkout is required.
 - Add bounded, ordered UTF-8/IME input, logical editor commands, explicit paste
   injection, frame-only delivery and modal keyboard ownership with cancellation.
   InputEvent gains a Text marker; exhaustive consumer matches must account for it.

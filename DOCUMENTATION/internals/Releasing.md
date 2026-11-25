@@ -2,44 +2,41 @@
 
 [Documentation](../README.md) / Internals
 
-The current development version is **0.2.0-dev.1**, using local
-**sim-engine = 0.5.0-dev.1**. The target final versions are **Logic 0.2.0** and
-**Engine 0.5.0**. Neither the development version string nor a successful local
-build establishes registry publication. Publication remains a separate approved
+The current development version is **Logic 0.2.0-dev.1**, using published
+registry **sim-engine = 0.5.0**, pinned exactly without a path dependency.
+The target final Logic version is **0.2.0**. Engine publication does not establish
+Logic publication or qualification. Publication remains a separate approved
 step; qualification commands below do not upload or tag a release.
 
 ## Engine and consumer release gates
 
-The Engine handoff reports the layered-rendering and exact text-cluster geometry
-APIs implemented and checked. Its last text-contract review and full release run
-on the final Engine commit remain pending, followed by Engine publication.
-There is no confirmed Engine defect in the desktop integration request.
+Engine 0.5.0 is published. The upstream handoff reports its final text-contract
+review, Linux/Vulkan release checks, CI and package checks complete, with
+commit `33e0277` and tag `v0.5.0`. Logic now resolves the crates.io artifact;
+its lockfile records the registry source and checksum.
 
 Logic's standard desktop layered bridge is already implemented: assignment,
 resolution/effects, target lifecycle, input/UI preservation and diagnostics.
 Chaos;Chess acceptance must exercise that bridge; consumer acceptance is still
-open. Local Logic/Engine checkouts are the supported development route meanwhile.
-Consumers pinned to `=0.1.0` must explicitly adopt `=0.2.0-dev.1` and refresh
-their lockfiles. This preparation does not edit consumer manifests.
+open and owned by the consumer. Use a local Logic checkout with registry Engine
+for development. Consumers pinned to `=0.1.0` must explicitly adopt
+`=0.2.0-dev.1` and refresh their lockfiles. Direct Engine dependencies must use
+the same registry source/version as Logic to preserve type identity.
 
-After Engine 0.5.0 is published:
+Before the final Logic release:
 
-1. Replace Logic's Engine dependency with `version = "=0.5.0"` and remove `path`.
-   Resolve and inspect the lockfile against the registry artifact. Check direct
-   consumer Engine dependencies for the same type/source identity.
-2. Set Logic to 0.2.0 when its final scope and acceptance are complete; update
+1. Set Logic to 0.2.0 when its final scope and acceptance are complete; update
    the changelog and installation examples. Keep unimplemented mutable screen
    textures and live diagnostic history outside the advertised release scope.
-3. Run the full local gate, MSRV and applicable native/consumer acceptance on
+2. Run the full local gate, MSRV and applicable native/consumer acceptance on
    the final candidate. Recheck the registry-backed package and clean-commit
    `cargo publish --dry-run --locked --all-features`.
-4. Publish/tag only after explicit release approval. Re-run affected checks if
+3. Publish/tag only after explicit release approval. Re-run affected checks if
    the final dependency artifact or source changes after qualification.
 
-While Engine is local and unpublished, package/archive and publish dry-run gates
-remain open. `scripts/check-release.sh` includes registry-backed packaging and
-is not expected to qualify this development dependency graph end to end. Use
-individual source checks for development and report their limited scope.
+`scripts/check-release.sh` can now verify registry-backed packaging as well as
+source checks. Passing it or a publish dry-run for 0.2.0-dev.1 does not qualify
+a later final candidate or complete native/consumer acceptance.
 
 ## Package and documentation
 

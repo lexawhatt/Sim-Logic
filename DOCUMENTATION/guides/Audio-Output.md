@@ -8,7 +8,7 @@ audio file. Rodio 0.22.2 supplies device output and channel/sample conversion;
 only its playback feature is enabled by this dependency.
 
 Enable audio independently of the desktop renderer. For the current local
-development version, use the adjacent checkouts described in the
+development version, use the local Logic checkout described in the
 [installation guide](../../README.md#install) and adjust the path:
 
 ```toml

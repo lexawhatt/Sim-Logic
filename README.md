@@ -19,17 +19,17 @@ a physics engine or a second renderer.
 - Optional audio output, explicit resource limits and presentation diagnostics.
 
 This is the **0.2.0-dev.1** development checkout, targeting **0.2.0**.
-It uses sibling `../Sim-Engine` **0.5.0-dev.1**. Both checkouts are required;
-this development version is not published to crates.io. Final 0.2.0 will use
-registry Engine 0.5.0 after dependency publication and release qualification.
+It uses the published **Sim;Engine 0.5.0** crate, pinned exactly.
+Logic 0.2.0-dev.1 is not published to crates.io; final 0.2.0 still requires
+Logic release qualification and consumer acceptance.
 The API is pre-1.0; minor releases may change it. See the
 [migration notes](CHANGELOG.md#migration-from-01).
 
 ## Install
 
-Rust **1.95 or newer** is required. For this development version, place
-Sim-Logic and Sim-Engine next to each other and point your application at the
-Logic checkout (adjust the path for your directory layout):
+Rust **1.95 or newer** is required. For this development version, point your
+application at the Logic checkout (adjust the path for your directory layout).
+Cargo downloads Engine 0.5.0 from crates.io; no Engine checkout is required:
 
 ```toml
 [dependencies]
