@@ -2,55 +2,50 @@
 
 [Documentation](../README.md) / Internals
 
-The current development version is **Logic 0.2.0-dev.1**, using published
-registry **sim-engine = 0.5.0**, pinned exactly without a path dependency.
-The target final Logic version is **0.2.0**. Engine publication does not establish
-Logic publication or qualification. Publication remains a separate approved
-step; qualification commands below do not upload or tag a release.
+The current version is **Logic 0.2.0**, using registry **sim-engine = 0.5.0**,
+pinned exactly without a path dependency. Version strings do not establish
+publication or qualification. The commands below prepare and verify a release;
+publication and tagging are separate actions on the tested commit.
 
-## Engine and consumer release gates
+## Engine and consumer release evidence
 
-Engine 0.5.0 is published. The upstream handoff reports its final text-contract
-review, Linux/Vulkan release checks, CI and package checks complete, with
-commit `33e0277` and tag `v0.5.0`. Logic now resolves the crates.io artifact;
-its lockfile records the registry source and checksum.
+Engine 0.5.0 is published from commit `33e0277`, tag `v0.5.0`. Logic resolves the
+crates.io artifact; its lockfile records the registry source and checksum.
 
-Logic's standard desktop layered bridge is already implemented: assignment,
-resolution/effects, target lifecycle, input/UI preservation and diagnostics.
-Chaos;Chess reported existing-game compatibility on November 25 against Logic
-`af98d65` (0.2.0-dev.1) and local Engine `33e0277` (0.5.0): all-target checks,
-strict Clippy, 39 tests and a native smoke run passed. The smoke drew 119 frames,
-skipped one and reported zero budget rejections. The game still CPU-rasterizes
-a full-frame texture; it does not exercise the layered bridge. Its Engine path
-patch also means this run did not qualify the published registry artifact.
+Chaos;Chess's November 25 functional layered report covers local Logic
+`bfec051` (0.2.0-dev.1, runtime unchanged from `af98d65`) with registry Engine
+0.5.0. It supersedes the earlier CPU-only compatibility report for that game:
 
-Layered consumer acceptance remains open and owned by the consumer: Base/Detail
-occlusion and fog, picking/book composition, resize/recovery, and live UI after
-3D rejection need a migrated game scene. New semantic text/IME in the notebook,
-consumer MSRV and the final Logic 0.2.0 commit remain unverified by that report.
-Logic's own registry/package checks and earlier native bridge checks are separate
-evidence; they do not establish game acceptance. The report therefore closes the
-existing-game compatibility check, not the complete consumer release gate.
+- Base board/fog, Detail pieces and a 3D book, independent screen UI and picking.
+- All-target checks, strict Clippy, 42 tests and a native smoke run passed.
+- Isolated X11/Vulkan acceptance presented 798 frames, skipped one and reported
+  zero budget rejections. It deliberately rejected 131 layered 3D contributions
+  while UI pointer and keyboard input remained active.
+- Odd-size resize and resolution replacement passed; normal 3D presentation
+  resumed after the expected rejection cleared.
 
-Use a local Logic checkout with registry Engine for development.
-Consumers pinned to `=0.1.0` must explicitly adopt
-`=0.2.0-dev.1` and refresh their lockfiles. Direct Engine dependencies must use
-the same registry source/version as Logic to preserve type identity.
+This closes the reported consumer functional gate for the tested sources.
+It does not qualify a later Logic commit. Consumer deliberate GPU-device loss,
+notebook IME, Rust 1.95, Windows, user visual approval and end-to-end performance
+are not established by that run. Recovery from an expected rejection is distinct
+from device-loss recovery. Logic's own native tests and MSRV/package checks are
+separate evidence with their own revision and platform scope.
 
-Before the final Logic release:
+For each final release candidate:
 
-1. Set Logic to 0.2.0 when its final scope and acceptance are complete; update
-   the changelog and installation examples. Keep unimplemented mutable screen
-   textures and live diagnostic history outside the advertised release scope.
-2. Run the full local gate, MSRV and applicable native/consumer acceptance on
-   the final candidate. Recheck the registry-backed package and clean-commit
-   `cargo publish --dry-run --locked --all-features`.
-3. Publish/tag only after explicit release approval. Re-run affected checks if
-   the final dependency artifact or source changes after qualification.
+1. Align the version, changelog and installation examples. Consumers moving
+   from a prerelease must update their version requirement and lockfile; direct
+   Engine dependencies must use the same registry source/version as Logic.
+2. Run the full local gate, MSRV and applicable native checks on the final commit.
+   Record whether runtime sources changed since consumer acceptance; rerun
+   affected consumer checks when they did. Check the registry-backed package and
+   clean-commit `cargo publish --dry-run --locked --all-features`.
+3. Publish/tag the tested commit only within the approved release scope. Re-run
+   affected checks if sources or the dependency artifact change afterward.
 
-`scripts/check-release.sh` can now verify registry-backed packaging as well as
-source checks. Passing it or a publish dry-run for 0.2.0-dev.1 does not qualify
-a later final candidate or complete native/consumer acceptance.
+Mutable screen textures and live diagnostic history are not implemented release
+features. A bounded final GPU timing batch does not establish whole-run timing
+percentiles or total frame speedup.
 
 ## Package and documentation
 

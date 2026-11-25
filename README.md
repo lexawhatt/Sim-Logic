@@ -18,29 +18,24 @@ a physics engine or a second renderer.
 - A retained 3D bridge for host-built meshes, materials, lighting and textures.
 - Optional audio output, explicit resource limits and presentation diagnostics.
 
-This is the **0.2.0-dev.1** development checkout, targeting **0.2.0**.
-It uses the published **Sim;Engine 0.5.0** crate, pinned exactly.
-Logic 0.2.0-dev.1 is not published to crates.io; final 0.2.0 still requires
-Logic release qualification and consumer acceptance.
+Sim;Logic **0.2.0** uses **Sim;Engine 0.5.0**, pinned exactly.
 The API is pre-1.0; minor releases may change it. See the
 [migration notes](CHANGELOG.md#migration-from-01).
 
 ## Install
 
-Rust **1.95 or newer** is required. For this development version, point your
-application at the Logic checkout (adjust the path for your directory layout).
-Cargo downloads Engine 0.5.0 from crates.io; no Engine checkout is required:
+Rust **1.95 or newer** is required. Add Sim;Logic to your Cargo manifest:
 
 ```toml
 [dependencies]
-sim-logic = { path = "../Sim-Logic", version = "=0.2.0-dev.1" }
+sim-logic = "0.2.0"
 ```
 
 The default `desktop` feature includes the window and GPU adapter. For a
 windowless application or test:
 
 ```toml
-sim-logic = { path = "../Sim-Logic", version = "=0.2.0-dev.1", default-features = false }
+sim-logic = { version = "0.2.0", default-features = false }
 ```
 
 | Optional feature | Adds |

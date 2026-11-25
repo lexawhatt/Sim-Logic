@@ -4,7 +4,7 @@ Sim;Logic supplies the application loop, objects, input and update order.
 Sim;Engine draws the result. Your application owns its game rules, scientific
 models or other domain logic; rendered state is not the model itself.
 
-These guides describe the 0.2 development API. It is pre-1.0: future minor releases may
+These guides describe the 0.2 API. It is pre-1.0: future minor releases may
 contain documented breaking changes.
 
 ## Start here
@@ -68,9 +68,7 @@ an editor, a general UI/asset-loading toolkit and a `Faulted` recovery schedule
 are not implemented. The topic guides describe their specific limits:
 pointer buttons have no global routing focus (OS capture is a separate explicit service), audio is not a World-owned voice service,
 and 3D accepts host-built textured meshes but supplies no model-file importer.
-Logic `0.2.0-dev.1` depends on published registry Engine `0.5.0`, pinned
-exactly. Logic targets `0.2.0`; its publication and final qualification remain
-pending. The guides distinguish supported paths from remaining test gaps.
+Logic `0.2.0` depends on registry Engine `0.5.0`, pinned exactly. The guides distinguish supported paths from remaining test gaps.
 
 Headless use needs neither a window nor a GPU. Desktop examples have been
 checked on Linux/Vulkan, not every platform. The [repository README](../README.md)

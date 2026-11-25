@@ -3,16 +3,16 @@
 User-visible changes to Sim;Logic. This project is pre-1.0; minor releases may
 contain documented breaking changes.
 
-## 0.2.0-dev.1 - development, not published
+## 0.2.0 - 2026-11-25
 
-Target final version: 0.2.0, after final Logic release checks.
-Engine 0.5.0 is now a published registry dependency. Consumer acceptance through the stock desktop bridge
-remains separate and is not claimed complete.
+Uses published Sim;Engine 0.5.0. Adds bounded semantic text input, exact text
+geometry and two-resolution rendering through the standard desktop host.
 
 ### Migration from 0.1
 
-- Update consumer version requirements explicitly to `=0.2.0-dev.1` when using
-  this local development checkout; an `=0.1.0` requirement will not match it.
+- Update consumer version requirements to `0.2.0`; a `0.1` requirement will not
+  match this minor release. Remove development path patches when adopting the
+  registry packages.
 - Account for the new `InputEvent::Text` marker in exhaustive matches and use
   ordered semantic text events for character input. `BeginFrameRejection::Text`
   and new public desktop error variants also affect exhaustive matches.
